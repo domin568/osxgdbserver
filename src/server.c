@@ -375,7 +375,10 @@ step_past_breakpoint (int is_step, char *statusp)
   myresume (1, 0);
   sig = mywait (statusp, 1);
   reinsert_breakpoint (pc);
-  regcache_invalidate ();
+
+  /* Re-fetch registers so the regcache reflects post-step state.
+     prepare_resume_reply reads expedited regs (r1, pc) from it. */
+  set_desired_inferior (1);
 
   if (is_step)
     return 1;   /* The step-past IS the user's single step. */
