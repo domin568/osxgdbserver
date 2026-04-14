@@ -293,11 +293,6 @@ again:
       perror_with_name ("waitpid");
     }
 
-  /* Refresh Mach thread port after the wait.  */
-  current_thread = darwin_get_first_thread (current_task);
-  proc->thread = current_thread;
-  proc->stopped = 1;
-
   if (WIFEXITED (w))
     {
       *status = 'W';
@@ -308,7 +303,13 @@ again:
       *status = 'X';
       return WTERMSIG (w);
     }
-  else if (WIFSTOPPED (w))
+
+  /* Only refresh Mach thread port when the process is still alive.  */
+  current_thread = darwin_get_first_thread (current_task);
+  proc->thread = current_thread;
+  proc->stopped = 1;
+
+  if (WIFSTOPPED (w))
     {
       *status = 'T';
       return WSTOPSIG (w);

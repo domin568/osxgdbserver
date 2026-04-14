@@ -160,6 +160,13 @@ remote_open (char *name)
       /* Convert IP address to string.  */
       fprintf (stderr, "Remote debugging from host %s\n", 
          inet_ntoa (sockaddr.sin_addr));
+
+      /* Send initial ACK so clients that wait for server readiness
+         (e.g. IDA Pro) know we are ready to receive packets.  */
+      {
+        char ack = '+';
+        write (remote_desc, &ack, 1);
+      }
     }
 
 #if defined(F_SETFL) && defined (FASYNC)

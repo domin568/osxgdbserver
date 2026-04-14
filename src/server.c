@@ -20,6 +20,7 @@
    Boston, MA 02111-1307, USA.  */
 
 #include "server.h"
+#include "cond-bp.h"
 
 #include <unistd.h>
 #include <signal.h>
@@ -34,6 +35,8 @@ int extended_protocol;
 int server_waiting;
 
 jmp_buf toplevel;
+
+static unsigned char mywait_cond (char *statusp, int connected);
 
 /* The PID of the originally created or attached inferior.  Used to
    send signals to the process when GDB sends us an asynchronous interrupt
@@ -99,6 +102,19 @@ handle_query (char *own_buf)
       return;
     }
 
+  if (strncmp ("qSupported", own_buf, 10) == 0)
+    {
+      sprintf (own_buf, "PacketSize=%x;QStartNoAckMode+", PBUFSIZ - 1);
+      return;
+    }
+
+  if (strcmp ("qAttached", own_buf) == 0)
+    {
+      /* We created the process (not attached).  */
+      strcpy (own_buf, "0");
+      return;
+    }
+
   if (strcmp ("qSymbol::", own_buf) == 0)
     {
       if (the_target->look_up_symbols != NULL)
@@ -148,6 +164,12 @@ handle_query (char *own_buf)
 	write_enn (own_buf);
       else
 	convert_int_to_ascii (data, own_buf, n);
+      return;
+    }
+
+  if (strncmp ("qRcmd,", own_buf, 6) == 0)
+    {
+      handle_rcmd (own_buf + 6, own_buf);
       return;
     }
 
@@ -250,7 +272,7 @@ handle_v_cont (char *own_buf, char *status, unsigned char *signal)
 
   free (resume_info);
 
-  *signal = mywait (status, 1);
+  *signal = mywait_cond (status, 1);
   prepare_resume_reply (own_buf, *status, *signal);
   return;
 
@@ -316,6 +338,58 @@ gdbserver_usage (void)
 	 "\n"
 	 "COMM may either be a tty device (for serial debugging), or \n"
 	 "HOST:PORT to listen for a TCP connection.\n");
+}
+
+/* Wait for the inferior, checking conditional breakpoints.
+   When a cond_bp fires but its condition is NOT met, silently
+   step over the breakpoint and continue.  Returns only when:
+   - the process exits/dies, or
+   - a stop occurs that is NOT a cond_bp with unmet condition.  */
+static unsigned char
+mywait_cond (char *statusp, int connected)
+{
+  unsigned char sig;
+
+  for (;;)
+    {
+      sig = mywait (statusp, connected);
+
+      /* Only check conditional BPs on SIGTRAP stops. */
+      if (*statusp == 'T' && sig == TARGET_SIGNAL_TRAP)
+        {
+          unsigned int pc32 = 0;
+          CORE_ADDR pc;
+          int cond;
+
+          /* Fetch registers so we can read PC and condition regs. */
+          set_desired_inferior (1);
+          collect_register_by_name ("pc", &pc32);
+          pc = (CORE_ADDR) pc32;
+
+          cond = check_cond_bp (pc);
+          if (cond == 2)
+            {
+              /* Condition not met — step over breakpoint and continue. */
+              uninsert_breakpoint (pc);
+
+              /* Single-step past the original instruction. */
+              myresume (1, 0);
+              sig = mywait (statusp, connected);
+
+              reinsert_breakpoint (pc);
+
+              /* Invalidate register cache before continuing. */
+              regcache_invalidate ();
+
+              /* Now continue running. */
+              myresume (0, 0);
+              continue;
+            }
+          /* cond == 0 (not a cond_bp) or cond == 1 (condition met) → stop. */
+        }
+
+      return sig;
+    }
 }
 
 int
@@ -421,18 +495,9 @@ main (int argc, char *argv[])
 	      exit (0);
 
 	    case '!':
-	      if (attached == 0)
-		{
-		  extended_protocol = 1;
-		  prepare_resume_reply (own_buf, status, signal);
-		}
-	      else
-		{
-		  /* We can not use the extended protocol if we are
-		     attached, because we can not restart the running
-		     program.  So return unrecognized.  */
-		  own_buf[0] = '\0';
-		}
+	      /* Respond OK but don't actually enable extended protocol —
+	         we want to exit cleanly when the inferior exits.  */
+	      write_ok (own_buf);
 	      break;
 	    case '?':
 	      prepare_resume_reply (own_buf, status, signal);
@@ -469,6 +534,38 @@ main (int argc, char *argv[])
 	      registers_from_string (&own_buf[1]);
 	      write_ok (own_buf);
 	      break;
+	    case 'p':
+	      {
+		int regno = strtol (&own_buf[1], NULL, 16);
+		set_desired_inferior (1);
+		if (regno >= 0 && find_register_by_number (regno) != NULL)
+		  collect_register_as_string (regno, own_buf);
+		else
+		  write_enn (own_buf);
+	      }
+	      break;
+	    case 'P':
+	      {
+		int regno;
+		char *regbytes;
+		char regbuf[16];
+
+		regno = strtol (&own_buf[1], &regbytes, 16);
+		if (*regbytes == '=')
+		  regbytes++;
+
+		set_desired_inferior (1);
+		if (regno >= 0 && find_register_by_number (regno) != NULL)
+		  {
+		    int regsize = register_size (regno);
+		    convert_ascii_to_int (regbytes, regbuf, regsize);
+		    supply_register (regno, regbuf);
+		    write_ok (own_buf);
+		  }
+		else
+		  write_enn (own_buf);
+	      }
+	      break;
 	    case 'm':
 	      decode_m_packet (&own_buf[1], &mem_addr, &len);
 	      read_inferior_memory (mem_addr, mem_buf, len);
@@ -489,7 +586,7 @@ main (int argc, char *argv[])
 		signal = 0;
 	      set_desired_inferior (0);
 	      myresume (0, signal);
-	      signal = mywait (&status, 1);
+	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
 	    case 'S':
@@ -500,19 +597,19 @@ main (int argc, char *argv[])
 		signal = 0;
 	      set_desired_inferior (0);
 	      myresume (1, signal);
-	      signal = mywait (&status, 1);
+	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
 	    case 'c':
 	      set_desired_inferior (0);
 	      myresume (0, 0);
-	      signal = mywait (&status, 1);
+	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
 	    case 's':
 	      set_desired_inferior (0);
 	      myresume (1, 0);
-	      signal = mywait (&status, 1);
+	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
 	    case 'k':
@@ -567,6 +664,36 @@ main (int argc, char *argv[])
 	    case 'v':
 	      /* Extended (long) request.  */
 	      handle_v_requests (own_buf, &status, &signal);
+	      break;
+	    case 'Z':
+	      {
+		/* Z0,addr,kind — insert software breakpoint. */
+		char type = own_buf[1];
+		if (type == '0')
+		  {
+		    CORE_ADDR addr;
+		    unsigned int kind;
+		    char *p = &own_buf[3]; /* skip "Z0," */
+		    addr = (CORE_ADDR) strtoul (p, &p, 16);
+		    if (*p == ',') p++;
+		    kind = strtoul (p, NULL, 16);
+		    set_breakpoint_at (addr, NULL);
+		    write_ok (own_buf);
+		  }
+		else
+		  own_buf[0] = '\0'; /* unsupported Z type */
+	      }
+	      break;
+	    case 'z':
+	      {
+		/* z0,addr,kind — remove software breakpoint.
+		   We don't currently support removal, just ack it. */
+		char type = own_buf[1];
+		if (type == '0')
+		  write_ok (own_buf);
+		else
+		  own_buf[0] = '\0';
+	      }
 	      break;
 	    default:
 	      /* It is a request we don't understand.  Respond with an
