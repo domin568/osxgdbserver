@@ -296,8 +296,6 @@ cmd_cond_bp (const char *args, char *own_buf)
           target[i--] = '\0';
       }
 
-      set_breakpoint_at ((CORE_ADDR) bp_addr, NULL);
-
       cond_bps[slot].active = 1;
       cond_bps[slot].addr = (CORE_ADDR) bp_addr;
       cond_bps[slot].cond_type = COND_TYPE_STR;
@@ -346,8 +344,6 @@ cmd_cond_bp (const char *args, char *own_buf)
 
       value = strtoul (val_str, NULL, 16);
 
-      set_breakpoint_at ((CORE_ADDR) bp_addr, NULL);
-
       cond_bps[slot].active = 1;
       cond_bps[slot].addr = (CORE_ADDR) bp_addr;
       cond_bps[slot].cond_type = COND_TYPE_REG;
@@ -393,8 +389,6 @@ cmd_cond_bp (const char *args, char *own_buf)
         }
 
       value = strtoul (val_str, NULL, 16);
-
-      set_breakpoint_at ((CORE_ADDR) bp_addr, NULL);
 
       cond_bps[slot].active = 1;
       cond_bps[slot].addr = (CORE_ADDR) bp_addr;
@@ -462,6 +456,7 @@ cmd_help (char *own_buf)
     "  remove_cond_bp <addr>\n"
     "  help\n"
     "Operators: == != > < >= <=\n"
+    "NOTE: Set breakpoint in IDA first, then add condition.\n"
     "Examples:\n"
     "  cond_bp 4c4dc reg r3 == 0\n"
     "  cond_bp 4c4dc mem bffeff40 4 != 0\n"
