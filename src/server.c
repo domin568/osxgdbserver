@@ -37,6 +37,7 @@ int server_waiting;
 jmp_buf toplevel;
 
 static unsigned char mywait_cond (char *statusp, int connected);
+static int step_past_breakpoint (int is_step, char *statusp);
 
 /* The PID of the originally created or attached inferior.  Used to
    send signals to the process when GDB sends us an asynchronous interrupt
@@ -268,6 +269,26 @@ handle_v_cont (char *own_buf, char *status, unsigned char *signal)
     cont_thread = -1;
   set_desired_inferior (0);
 
+  /* If the first action is a step and PC is at a breakpoint,
+     step past it first — the step-past IS the user's step. */
+  if (n >= 1 && resume_info[0].step)
+    {
+      char stepstat = 'T';
+      if (step_past_breakpoint (1, &stepstat))
+        {
+          free (resume_info);
+          *signal = TARGET_SIGNAL_TRAP;
+          *status = stepstat;
+          prepare_resume_reply (own_buf, *status, *signal);
+          return;
+        }
+    }
+  else
+    {
+      char stepstat = 'T';
+      step_past_breakpoint (0, &stepstat);
+    }
+
   (*the_target->resume) (resume_info);
 
   free (resume_info);
@@ -329,6 +350,39 @@ myresume (int step, int sig)
 }
 
 static int attached;
+
+/* If the current PC is sitting on an inserted software breakpoint,
+   temporarily remove it, single-step the real instruction, and
+   reinsert it.  Returns 1 if a breakpoint was stepped past, 0 if not.
+   When stepping (is_step=1), the single-step IS the user's step,
+   so the caller should skip its own myresume.  */
+static int
+step_past_breakpoint (int is_step, char *statusp)
+{
+  unsigned int pc32 = 0;
+  CORE_ADDR pc;
+  unsigned char sig;
+
+  set_desired_inferior (1);
+  collect_register_by_name ("pc", &pc32);
+  pc = (CORE_ADDR) pc32;
+
+  if (!breakpoint_inserted_here (pc))
+    return 0;
+
+  /* Remove the trap, step the real instruction, put it back. */
+  uninsert_breakpoint (pc);
+  myresume (1, 0);
+  sig = mywait (statusp, 1);
+  reinsert_breakpoint (pc);
+  regcache_invalidate ();
+
+  if (is_step)
+    return 1;   /* The step-past IS the user's single step. */
+
+  /* For continue: we stepped past, now caller will continue. */
+  return 1;
+}
 
 static void
 gdbserver_usage (void)
@@ -585,6 +639,7 @@ main (int argc, char *argv[])
 	      else
 		signal = 0;
 	      set_desired_inferior (0);
+	      step_past_breakpoint (0, &status);
 	      myresume (0, signal);
 	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
@@ -596,18 +651,31 @@ main (int argc, char *argv[])
 	      else
 		signal = 0;
 	      set_desired_inferior (0);
+	      if (step_past_breakpoint (1, &status))
+		{
+		  signal = TARGET_SIGNAL_TRAP;
+		  prepare_resume_reply (own_buf, status, signal);
+		  break;
+		}
 	      myresume (1, signal);
 	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
 	    case 'c':
 	      set_desired_inferior (0);
+	      step_past_breakpoint (0, &status);
 	      myresume (0, 0);
 	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
 	    case 's':
 	      set_desired_inferior (0);
+	      if (step_past_breakpoint (1, &status))
+		{
+		  signal = TARGET_SIGNAL_TRAP;
+		  prepare_resume_reply (own_buf, status, signal);
+		  break;
+		}
 	      myresume (1, 0);
 	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);

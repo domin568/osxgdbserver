@@ -209,6 +209,13 @@ set_breakpoint_data (const char *bp_data, int bp_len)
   breakpoint_len = bp_len;
 }
 
+int
+breakpoint_inserted_here (CORE_ADDR where)
+{
+  struct breakpoint *bp = find_breakpoint_at (where);
+  return (bp != NULL && !bp->reinserting);
+}
+
 void
 check_mem_read (CORE_ADDR mem_addr, char *buf, int mem_len)
 {

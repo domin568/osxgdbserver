@@ -68,4 +68,8 @@ void check_mem_write (CORE_ADDR mem_addr, char *buf, int mem_len);
 
 void set_breakpoint_data (const char *bp_data, int bp_len);
 
+/* Return non-zero if there is a currently inserted breakpoint at WHERE.  */
+
+int breakpoint_inserted_here (CORE_ADDR where);
+
 #endif /* MEM_BREAK_H */
