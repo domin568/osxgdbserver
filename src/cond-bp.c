@@ -96,21 +96,6 @@ parse_reg_name (const char *name)
 
 /* ── Operator parsing ─────────────────────────────────────────── */
 
-static const char *
-op_to_str (int op)
-{
-  switch (op)
-    {
-    case COND_OP_EQ: return "==";
-    case COND_OP_NE: return "!=";
-    case COND_OP_GT: return ">";
-    case COND_OP_LT: return "<";
-    case COND_OP_GE: return ">=";
-    case COND_OP_LE: return "<=";
-    }
-  return "??";
-}
-
 /* Parse operator string.  Returns op code or -1 on error. */
 static int
 parse_op (const char *s)
@@ -551,16 +536,16 @@ check_cond_bp (CORE_ADDR pc)
 
           if (cb->op == COND_OP_EQ)
             {
-              fprintf (stderr, "cond_bp: 0x%lx str(\"%s\") == \"%s\" -> %s\n",
-                       (unsigned long) pc, str_buf, cb->str_value,
-                       match ? "STOP" : "continue");
+              if (match)
+                fprintf (stderr, "cond_bp HIT: 0x%lx str(\"%s\") == \"%s\"\n",
+                         (unsigned long) pc, str_buf, cb->str_value);
               return match ? 1 : 2;
             }
           else
             {
-              fprintf (stderr, "cond_bp: 0x%lx str(\"%s\") != \"%s\" -> %s\n",
-                       (unsigned long) pc, str_buf, cb->str_value,
-                       !match ? "STOP" : "continue");
+              if (!match)
+                fprintf (stderr, "cond_bp HIT: 0x%lx str(\"%s\") != \"%s\"\n",
+                         (unsigned long) pc, str_buf, cb->str_value);
               return !match ? 1 : 2;
             }
         }
@@ -573,10 +558,9 @@ check_cond_bp (CORE_ADDR pc)
           collect_register (cb->reg_index, &reg_val);
           result = compare_values ((unsigned long) reg_val, cb->op, cb->value);
 
-          fprintf (stderr, "cond_bp: 0x%lx reg(%d)=0x%x %s 0x%lx -> %s\n",
-                   (unsigned long) pc, cb->reg_index, reg_val,
-                   op_to_str (cb->op), cb->value,
-                   result ? "STOP" : "continue");
+          if (result)
+            fprintf (stderr, "cond_bp HIT: 0x%lx reg(%d)=0x%x\n",
+                     (unsigned long) pc, cb->reg_index, reg_val);
           return result ? 1 : 2;
         }
       else if (cb->cond_type == COND_TYPE_MEM)
@@ -608,11 +592,10 @@ check_cond_bp (CORE_ADDR pc)
 
           result = compare_values (current, cb->op, cb->value);
 
-          fprintf (stderr,
-                   "cond_bp: 0x%lx mem[0x%lx:%d]=0x%lx %s 0x%lx -> %s\n",
-                   (unsigned long) pc, (unsigned long) cb->mem_addr,
-                   cb->mem_size, current, op_to_str (cb->op), cb->value,
-                   result ? "STOP" : "continue");
+          if (result)
+            fprintf (stderr, "cond_bp HIT: 0x%lx mem[0x%lx:%d]=0x%lx\n",
+                     (unsigned long) pc, (unsigned long) cb->mem_addr,
+                     cb->mem_size, current);
           return result ? 1 : 2;
         }
     }
