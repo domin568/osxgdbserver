@@ -107,16 +107,25 @@ darwin_create_inferior (char *program, char **allargs)
       _exit (0177);
     }
 
-  /* Parent - wait for child to stop at exec.  */
-  {
-    int status;
-    waitpid (pid, &status, 0);
-  }
+  /* Parent - do NOT waitpid here. start_inferior() in server.c
+     will call mywait() which calls darwin_wait() to catch the
+     initial exec stop.  We just need the task port now.  */
+  
+  /* Small delay to let the child exec and stop.  task_for_pid needs
+     the process to exist.  */
+  usleep (100000);
 
   current_task = darwin_task_for_pid (pid);
   if (current_task == MACH_PORT_NULL)
     {
+      /* If task_for_pid fails immediately, wait a bit more and retry.  */
+      usleep (200000);
+      current_task = darwin_task_for_pid (pid);
+    }
+  if (current_task == MACH_PORT_NULL)
+    {
       kill (pid, SIGKILL);
+      waitpid (pid, NULL, 0);
       error ("Cannot get task port for child (pid %d).\n"
              "Make sure you are root or the binary is signed.\n", pid);
     }
@@ -151,11 +160,8 @@ darwin_attach (int pid)
       return -1;
     }
 
-  /* Wait for the stop.  */
-  {
-    int status;
-    waitpid (pid, &status, 0);
-  }
+  /* Do NOT waitpid here — attach_inferior() in server.c will call
+     mywait() to catch the attach stop.  */
 
   current_task = darwin_task_for_pid (pid);
   if (current_task == MACH_PORT_NULL)
@@ -461,6 +467,8 @@ static struct target_ops darwin_target_ops = {
   NULL,  /* read_auxv - not available on Darwin */
 };
 
+extern int remote_debug;
+
 void
 initialize_low (void)
 {
@@ -468,4 +476,7 @@ initialize_low (void)
   set_breakpoint_data (the_low_target.breakpoint,
                        the_low_target.breakpoint_len);
   init_registers ();
+
+  /* Enable protocol debug logging for troubleshooting.  */
+  /* remote_debug = 1; */
 }

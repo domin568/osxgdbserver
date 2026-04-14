@@ -90,6 +90,15 @@ handle_query (char *own_buf)
 {
   static struct inferior_list_entry *thread_ptr;
 
+  if (strcmp ("qC", own_buf) == 0)
+    {
+      if (all_threads.head != NULL)
+	sprintf (own_buf, "QC%x", all_threads.head->id);
+      else
+	own_buf[0] = 0;
+      return;
+    }
+
   if (strcmp ("qSymbol::", own_buf) == 0)
     {
       if (the_target->look_up_symbols != NULL)

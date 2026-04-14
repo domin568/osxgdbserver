@@ -21,24 +21,55 @@
 #include "server.h"
 #include "darwin-low.h"
 
+#include <string.h>
 #include <mach/mach.h>
 #include <mach/thread_act.h>
 #include <mach/ppc/thread_status.h>
 
-#define PPC_NUM_REGS 71
-
 /*
-  Register layout in reg-ppc.dat (matches regcache order):
-    r0-r31    (32 x 32-bit)  regs 0..31
-    f0-f31    (32 x 64-bit)  regs 32..63
-    pc        (32-bit)       reg 64
-    ps/msr    (32-bit)       reg 65
-    cr        (32-bit)       reg 66
-    lr        (32-bit)       reg 67
-    ctr       (32-bit)       reg 68
-    xer       (32-bit)       reg 69
-    fpscr     (32-bit)       reg 70
+  Apple GDB (gdb-437) register layout for PowerPC (106 registers, 1084 bytes):
+
+    Regs  0-31:  r0-r31    (64-bit each, zero-extended from 32-bit HW regs)
+    Regs 32-63:  f0-f31    (64-bit each)
+    Regs 64-95:  v0-v31    (128-bit each, AltiVec)
+    Reg  96:     pc/srr0   (64-bit, zero-extended)
+    Reg  97:     ps/srr1   (64-bit, zero-extended)
+    Reg  98:     cr        (32-bit)
+    Reg  99:     lr        (64-bit, zero-extended)
+    Reg 100:     ctr       (64-bit, zero-extended)
+    Reg 101:     xer       (64-bit, zero-extended)
+    Reg 102:     mq        (32-bit, 601 only, zero for G4)
+    Reg 103:     fpscr     (32-bit)
+    Reg 104:     vscr      (32-bit)
+    Reg 105:     vrsave    (32-bit)
 */
+
+#define PPC_NUM_REGS 106
+
+/* Zero-extend a 32-bit value into a big-endian 64-bit buffer. */
+static void
+supply_reg64_from_32 (const char *name, unsigned int val)
+{
+  unsigned char buf[8];
+  buf[0] = 0; buf[1] = 0; buf[2] = 0; buf[3] = 0;
+  buf[4] = (val >> 24) & 0xff;
+  buf[5] = (val >> 16) & 0xff;
+  buf[6] = (val >> 8) & 0xff;
+  buf[7] = val & 0xff;
+  supply_register_by_name (name, buf);
+}
+
+/* Extract lower 32 bits from a big-endian 64-bit register. */
+static unsigned int
+collect_reg32_from_64 (const char *name)
+{
+  unsigned char buf[8];
+  collect_register_by_name (name, buf);
+  return ((unsigned int)buf[4] << 24)
+       | ((unsigned int)buf[5] << 16)
+       | ((unsigned int)buf[6] << 8)
+       | (unsigned int)buf[7];
+}
 
 /* Fetch all registers from the Mach thread into the regcache.  */
 static void
@@ -46,11 +77,13 @@ darwin_ppc_fetch_registers (int thread_port)
 {
   thread_act_t thread = (thread_act_t) thread_port;
   kern_return_t kr;
+  int i;
 
-  /* Fetch GPRs via PPC_THREAD_STATE.  */
+  /* --- GPRs and SPRs via PPC_THREAD_STATE --- */
   {
     ppc_thread_state_t state;
     mach_msg_type_number_t count = PPC_THREAD_STATE_COUNT;
+    unsigned int *gprs;
 
     kr = thread_get_state (thread, PPC_THREAD_STATE,
                            (thread_state_t) &state, &count);
@@ -61,50 +94,29 @@ darwin_ppc_fetch_registers (int thread_port)
         return;
       }
 
-    /* GPRs r0-r31.  */
-    supply_register_by_name ("r0",  &state.r0);
-    supply_register_by_name ("r1",  &state.r1);
-    supply_register_by_name ("r2",  &state.r2);
-    supply_register_by_name ("r3",  &state.r3);
-    supply_register_by_name ("r4",  &state.r4);
-    supply_register_by_name ("r5",  &state.r5);
-    supply_register_by_name ("r6",  &state.r6);
-    supply_register_by_name ("r7",  &state.r7);
-    supply_register_by_name ("r8",  &state.r8);
-    supply_register_by_name ("r9",  &state.r9);
-    supply_register_by_name ("r10", &state.r10);
-    supply_register_by_name ("r11", &state.r11);
-    supply_register_by_name ("r12", &state.r12);
-    supply_register_by_name ("r13", &state.r13);
-    supply_register_by_name ("r14", &state.r14);
-    supply_register_by_name ("r15", &state.r15);
-    supply_register_by_name ("r16", &state.r16);
-    supply_register_by_name ("r17", &state.r17);
-    supply_register_by_name ("r18", &state.r18);
-    supply_register_by_name ("r19", &state.r19);
-    supply_register_by_name ("r20", &state.r20);
-    supply_register_by_name ("r21", &state.r21);
-    supply_register_by_name ("r22", &state.r22);
-    supply_register_by_name ("r23", &state.r23);
-    supply_register_by_name ("r24", &state.r24);
-    supply_register_by_name ("r25", &state.r25);
-    supply_register_by_name ("r26", &state.r26);
-    supply_register_by_name ("r27", &state.r27);
-    supply_register_by_name ("r28", &state.r28);
-    supply_register_by_name ("r29", &state.r29);
-    supply_register_by_name ("r30", &state.r30);
-    supply_register_by_name ("r31", &state.r31);
+    /* r0-r31: pointer to r0 in the struct, they are contiguous. */
+    gprs = &state.r0;
+    for (i = 0; i < 32; i++)
+      {
+        char name[8];
+        sprintf (name, "r%d", i);
+        supply_reg64_from_32 (name, gprs[i]);
+      }
 
-    /* Special registers.  */
-    supply_register_by_name ("pc",  &state.srr0);
-    supply_register_by_name ("ps",  &state.srr1);
-    supply_register_by_name ("cr",  &state.cr);
-    supply_register_by_name ("lr",  &state.lr);
-    supply_register_by_name ("ctr", &state.ctr);
-    supply_register_by_name ("xer", &state.xer);
+    /* 64-bit SPRs (zero-extended from 32-bit hardware) */
+    supply_reg64_from_32 ("pc",  state.srr0);
+    supply_reg64_from_32 ("ps",  state.srr1);
+    supply_reg64_from_32 ("lr",  state.lr);
+    supply_reg64_from_32 ("ctr", state.ctr);
+    supply_reg64_from_32 ("xer", state.xer);
+
+    /* 32-bit SPRs */
+    supply_register_by_name ("cr",     &state.cr);
+    supply_register_by_name ("mq",     &state.mq);
+    supply_register_by_name ("vrsave", &state.vrsave);
   }
 
-  /* Fetch FPRs via PPC_FLOAT_STATE.  */
+  /* --- FPRs via PPC_FLOAT_STATE --- */
   {
     ppc_float_state_t fstate;
     mach_msg_type_number_t count = PPC_FLOAT_STATE_COUNT;
@@ -118,40 +130,49 @@ darwin_ppc_fetch_registers (int thread_port)
         return;
       }
 
-    supply_register_by_name ("f0",  &fstate.fpregs[0]);
-    supply_register_by_name ("f1",  &fstate.fpregs[1]);
-    supply_register_by_name ("f2",  &fstate.fpregs[2]);
-    supply_register_by_name ("f3",  &fstate.fpregs[3]);
-    supply_register_by_name ("f4",  &fstate.fpregs[4]);
-    supply_register_by_name ("f5",  &fstate.fpregs[5]);
-    supply_register_by_name ("f6",  &fstate.fpregs[6]);
-    supply_register_by_name ("f7",  &fstate.fpregs[7]);
-    supply_register_by_name ("f8",  &fstate.fpregs[8]);
-    supply_register_by_name ("f9",  &fstate.fpregs[9]);
-    supply_register_by_name ("f10", &fstate.fpregs[10]);
-    supply_register_by_name ("f11", &fstate.fpregs[11]);
-    supply_register_by_name ("f12", &fstate.fpregs[12]);
-    supply_register_by_name ("f13", &fstate.fpregs[13]);
-    supply_register_by_name ("f14", &fstate.fpregs[14]);
-    supply_register_by_name ("f15", &fstate.fpregs[15]);
-    supply_register_by_name ("f16", &fstate.fpregs[16]);
-    supply_register_by_name ("f17", &fstate.fpregs[17]);
-    supply_register_by_name ("f18", &fstate.fpregs[18]);
-    supply_register_by_name ("f19", &fstate.fpregs[19]);
-    supply_register_by_name ("f20", &fstate.fpregs[20]);
-    supply_register_by_name ("f21", &fstate.fpregs[21]);
-    supply_register_by_name ("f22", &fstate.fpregs[22]);
-    supply_register_by_name ("f23", &fstate.fpregs[23]);
-    supply_register_by_name ("f24", &fstate.fpregs[24]);
-    supply_register_by_name ("f25", &fstate.fpregs[25]);
-    supply_register_by_name ("f26", &fstate.fpregs[26]);
-    supply_register_by_name ("f27", &fstate.fpregs[27]);
-    supply_register_by_name ("f28", &fstate.fpregs[28]);
-    supply_register_by_name ("f29", &fstate.fpregs[29]);
-    supply_register_by_name ("f30", &fstate.fpregs[30]);
-    supply_register_by_name ("f31", &fstate.fpregs[31]);
+    for (i = 0; i < 32; i++)
+      {
+        char name[8];
+        sprintf (name, "f%d", i);
+        supply_register_by_name (name, &fstate.fpregs[i]);
+      }
 
     supply_register_by_name ("fpscr", &fstate.fpscr);
+  }
+
+  /* --- AltiVec via PPC_VECTOR_STATE --- */
+  {
+    ppc_vector_state_t vstate;
+    mach_msg_type_number_t count = PPC_VECTOR_STATE_COUNT;
+
+    kr = thread_get_state (thread, PPC_VECTOR_STATE,
+                           (thread_state_t) &vstate, &count);
+    if (kr == KERN_SUCCESS)
+      {
+        for (i = 0; i < 32; i++)
+          {
+            char name[8];
+            sprintf (name, "v%d", i);
+            supply_register_by_name (name, &vstate.save_vr[i][0]);
+          }
+
+        /* VSCR is in the last word of the 128-bit save_vscr field. */
+        supply_register_by_name ("vscr", &vstate.save_vscr[3]);
+      }
+    else
+      {
+        /* AltiVec not available — supply zeros. */
+        unsigned char zero16[16];
+        unsigned int zero4 = 0;
+        memset (zero16, 0, sizeof (zero16));
+        for (i = 0; i < 32; i++)
+          {
+            char name[8];
+            sprintf (name, "v%d", i);
+            supply_register_by_name (name, zero16);
+          }
+        supply_register_by_name ("vscr", &zero4);
+      }
   }
 }
 
@@ -161,13 +182,14 @@ darwin_ppc_store_registers (int thread_port)
 {
   thread_act_t thread = (thread_act_t) thread_port;
   kern_return_t kr;
+  int i;
 
-  /* Store GPRs.  */
+  /* --- GPRs and SPRs --- */
   {
     ppc_thread_state_t state;
     mach_msg_type_number_t count = PPC_THREAD_STATE_COUNT;
+    unsigned int *gprs;
 
-    /* Read current state first so we don't clobber fields we don't track.  */
     kr = thread_get_state (thread, PPC_THREAD_STATE,
                            (thread_state_t) &state, &count);
     if (kr != KERN_SUCCESS)
@@ -177,45 +199,23 @@ darwin_ppc_store_registers (int thread_port)
         return;
       }
 
-    collect_register_by_name ("r0",  &state.r0);
-    collect_register_by_name ("r1",  &state.r1);
-    collect_register_by_name ("r2",  &state.r2);
-    collect_register_by_name ("r3",  &state.r3);
-    collect_register_by_name ("r4",  &state.r4);
-    collect_register_by_name ("r5",  &state.r5);
-    collect_register_by_name ("r6",  &state.r6);
-    collect_register_by_name ("r7",  &state.r7);
-    collect_register_by_name ("r8",  &state.r8);
-    collect_register_by_name ("r9",  &state.r9);
-    collect_register_by_name ("r10", &state.r10);
-    collect_register_by_name ("r11", &state.r11);
-    collect_register_by_name ("r12", &state.r12);
-    collect_register_by_name ("r13", &state.r13);
-    collect_register_by_name ("r14", &state.r14);
-    collect_register_by_name ("r15", &state.r15);
-    collect_register_by_name ("r16", &state.r16);
-    collect_register_by_name ("r17", &state.r17);
-    collect_register_by_name ("r18", &state.r18);
-    collect_register_by_name ("r19", &state.r19);
-    collect_register_by_name ("r20", &state.r20);
-    collect_register_by_name ("r21", &state.r21);
-    collect_register_by_name ("r22", &state.r22);
-    collect_register_by_name ("r23", &state.r23);
-    collect_register_by_name ("r24", &state.r24);
-    collect_register_by_name ("r25", &state.r25);
-    collect_register_by_name ("r26", &state.r26);
-    collect_register_by_name ("r27", &state.r27);
-    collect_register_by_name ("r28", &state.r28);
-    collect_register_by_name ("r29", &state.r29);
-    collect_register_by_name ("r30", &state.r30);
-    collect_register_by_name ("r31", &state.r31);
+    gprs = &state.r0;
+    for (i = 0; i < 32; i++)
+      {
+        char name[8];
+        sprintf (name, "r%d", i);
+        gprs[i] = collect_reg32_from_64 (name);
+      }
 
-    collect_register_by_name ("pc",  &state.srr0);
-    collect_register_by_name ("ps",  &state.srr1);
-    collect_register_by_name ("cr",  &state.cr);
-    collect_register_by_name ("lr",  &state.lr);
-    collect_register_by_name ("ctr", &state.ctr);
-    collect_register_by_name ("xer", &state.xer);
+    state.srr0   = collect_reg32_from_64 ("pc");
+    state.srr1   = collect_reg32_from_64 ("ps");
+    state.lr     = collect_reg32_from_64 ("lr");
+    state.ctr    = collect_reg32_from_64 ("ctr");
+    state.xer    = collect_reg32_from_64 ("xer");
+
+    collect_register_by_name ("cr", &state.cr);
+    collect_register_by_name ("mq", &state.mq);
+    collect_register_by_name ("vrsave", &state.vrsave);
 
     kr = thread_set_state (thread, PPC_THREAD_STATE,
                            (thread_state_t) &state,
@@ -225,7 +225,7 @@ darwin_ppc_store_registers (int thread_port)
                mach_error_string (kr));
   }
 
-  /* Store FPRs.  */
+  /* --- FPRs --- */
   {
     ppc_float_state_t fstate;
     mach_msg_type_number_t count = PPC_FLOAT_STATE_COUNT;
@@ -239,38 +239,12 @@ darwin_ppc_store_registers (int thread_port)
         return;
       }
 
-    collect_register_by_name ("f0",  &fstate.fpregs[0]);
-    collect_register_by_name ("f1",  &fstate.fpregs[1]);
-    collect_register_by_name ("f2",  &fstate.fpregs[2]);
-    collect_register_by_name ("f3",  &fstate.fpregs[3]);
-    collect_register_by_name ("f4",  &fstate.fpregs[4]);
-    collect_register_by_name ("f5",  &fstate.fpregs[5]);
-    collect_register_by_name ("f6",  &fstate.fpregs[6]);
-    collect_register_by_name ("f7",  &fstate.fpregs[7]);
-    collect_register_by_name ("f8",  &fstate.fpregs[8]);
-    collect_register_by_name ("f9",  &fstate.fpregs[9]);
-    collect_register_by_name ("f10", &fstate.fpregs[10]);
-    collect_register_by_name ("f11", &fstate.fpregs[11]);
-    collect_register_by_name ("f12", &fstate.fpregs[12]);
-    collect_register_by_name ("f13", &fstate.fpregs[13]);
-    collect_register_by_name ("f14", &fstate.fpregs[14]);
-    collect_register_by_name ("f15", &fstate.fpregs[15]);
-    collect_register_by_name ("f16", &fstate.fpregs[16]);
-    collect_register_by_name ("f17", &fstate.fpregs[17]);
-    collect_register_by_name ("f18", &fstate.fpregs[18]);
-    collect_register_by_name ("f19", &fstate.fpregs[19]);
-    collect_register_by_name ("f20", &fstate.fpregs[20]);
-    collect_register_by_name ("f21", &fstate.fpregs[21]);
-    collect_register_by_name ("f22", &fstate.fpregs[22]);
-    collect_register_by_name ("f23", &fstate.fpregs[23]);
-    collect_register_by_name ("f24", &fstate.fpregs[24]);
-    collect_register_by_name ("f25", &fstate.fpregs[25]);
-    collect_register_by_name ("f26", &fstate.fpregs[26]);
-    collect_register_by_name ("f27", &fstate.fpregs[27]);
-    collect_register_by_name ("f28", &fstate.fpregs[28]);
-    collect_register_by_name ("f29", &fstate.fpregs[29]);
-    collect_register_by_name ("f30", &fstate.fpregs[30]);
-    collect_register_by_name ("f31", &fstate.fpregs[31]);
+    for (i = 0; i < 32; i++)
+      {
+        char name[8];
+        sprintf (name, "f%d", i);
+        collect_register_by_name (name, &fstate.fpregs[i]);
+      }
 
     collect_register_by_name ("fpscr", &fstate.fpscr);
 
@@ -281,26 +255,49 @@ darwin_ppc_store_registers (int thread_port)
       warning ("thread_set_state(PPC_FLOAT_STATE) failed: %s",
                mach_error_string (kr));
   }
+
+  /* --- AltiVec --- */
+  {
+    ppc_vector_state_t vstate;
+    mach_msg_type_number_t count = PPC_VECTOR_STATE_COUNT;
+
+    kr = thread_get_state (thread, PPC_VECTOR_STATE,
+                           (thread_state_t) &vstate, &count);
+    if (kr != KERN_SUCCESS)
+      return;  /* AltiVec not available */
+
+    for (i = 0; i < 32; i++)
+      {
+        char name[8];
+        sprintf (name, "v%d", i);
+        collect_register_by_name (name, &vstate.save_vr[i][0]);
+      }
+
+    collect_register_by_name ("vscr", &vstate.save_vscr[3]);
+
+    kr = thread_set_state (thread, PPC_VECTOR_STATE,
+                           (thread_state_t) &vstate,
+                           PPC_VECTOR_STATE_COUNT);
+    if (kr != KERN_SUCCESS)
+      warning ("thread_set_state(PPC_VECTOR_STATE) failed: %s",
+               mach_error_string (kr));
+  }
 }
 
 static CORE_ADDR
 darwin_ppc_get_pc (void)
 {
-  unsigned int pc;
-  collect_register_by_name ("pc", &pc);
-  return (CORE_ADDR) pc;
+  /* PC is a 64-bit register in the cache; extract lower 32 bits. */
+  return (CORE_ADDR) collect_reg32_from_64 ("pc");
 }
 
 static void
 darwin_ppc_set_pc (CORE_ADDR pc)
 {
-  unsigned int newpc = pc;
-  supply_register_by_name ("pc", &newpc);
+  supply_reg64_from_32 ("pc", (unsigned int) pc);
 }
 
-/* "trap" instruction — same as used by GDB for PPC software breakpoints.
-   This is "twge r2, r2" (0x7d821008), which is what GDB uses.
-   Correct in both big-endian and little-endian (PPC is big-endian here).  */
+/* PPC trap instruction for software breakpoints. */
 static const unsigned int ppc_breakpoint = 0x7d821008;
 #define PPC_BREAKPOINT_LEN 4
 
