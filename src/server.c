@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <stdlib.h>
 
 int cont_thread;
 int general_thread;
@@ -33,6 +34,12 @@ int thread_from_wait;
 int old_thread_from_wait;
 int extended_protocol;
 int server_waiting;
+
+/* Set to 1 when LOG=1 environment variable is present. */
+static int log_enabled = 0;
+
+#define LOG_CMD(fmt, ...) \
+  do { if (log_enabled) fprintf (stderr, "[LOG] " fmt "\n", ##__VA_ARGS__); } while (0)
 
 jmp_buf toplevel;
 
@@ -94,8 +101,10 @@ handle_query (char *own_buf)
 {
   static struct inferior_list_entry *thread_ptr;
 
+  /* [NEW] qC — return current thread ID */
   if (strcmp ("qC", own_buf) == 0)
     {
+      LOG_CMD ("qC — query current thread ID");
       if (all_threads.head != NULL)
 	sprintf (own_buf, "QC%x", all_threads.head->id);
       else
@@ -103,21 +112,26 @@ handle_query (char *own_buf)
       return;
     }
 
+  /* [NEW] qSupported — exchange feature support with client */
   if (strncmp ("qSupported", own_buf, 10) == 0)
     {
+      LOG_CMD ("qSupported — feature negotiation");
       sprintf (own_buf, "PacketSize=%x;QStartNoAckMode+", PBUFSIZ - 1);
       return;
     }
 
+  /* [NEW] qAttached — tell client we created (not attached to) the process */
   if (strcmp ("qAttached", own_buf) == 0)
     {
-      /* We created the process (not attached).  */
+      LOG_CMD ("qAttached — report process creation mode");
       strcpy (own_buf, "0");
       return;
     }
 
+  /* qSymbol — client offers to look up symbols for us */
   if (strcmp ("qSymbol::", own_buf) == 0)
     {
+      LOG_CMD ("qSymbol — symbol lookup offer");
       if (the_target->look_up_symbols != NULL)
 	(*the_target->look_up_symbols) ();
 
@@ -125,16 +139,20 @@ handle_query (char *own_buf)
       return;
     }
 
+  /* qfThreadInfo — first thread in thread list query */
   if (strcmp ("qfThreadInfo", own_buf) == 0)
     {
+      LOG_CMD ("qfThreadInfo — first thread info query");
       thread_ptr = all_threads.head;
       sprintf (own_buf, "m%x", thread_ptr->id);
       thread_ptr = thread_ptr->next;
       return;
     }
 
+  /* qsThreadInfo — subsequent threads in thread list query */
   if (strcmp ("qsThreadInfo", own_buf) == 0)
     {
+      LOG_CMD ("qsThreadInfo — subsequent thread info query");
       if (thread_ptr != NULL)
 	{
 	  sprintf (own_buf, "m%x", thread_ptr->id);
@@ -148,6 +166,7 @@ handle_query (char *own_buf)
 	}
     }
 
+  /* qPart:auxv:read — read auxiliary vector data */
   if (the_target->read_auxv != NULL
       && strncmp ("qPart:auxv:read::", own_buf, 17) == 0)
     {
@@ -155,6 +174,7 @@ handle_query (char *own_buf)
       CORE_ADDR ofs;
       unsigned int len;
       int n;
+      LOG_CMD ("qPart:auxv:read — read auxiliary vector");
       decode_m_packet (&own_buf[17], &ofs, &len); /* "OFS,LEN" */
       if (len > sizeof data)
 	len = sizeof data;
@@ -168,8 +188,10 @@ handle_query (char *own_buf)
       return;
     }
 
+  /* [NEW] qRcmd — remote monitor command (conditional breakpoints, etc.) */
   if (strncmp ("qRcmd,", own_buf, 6) == 0)
     {
+      LOG_CMD ("qRcmd — remote monitor command");
       handle_rcmd (own_buf + 6, own_buf);
       return;
     }
@@ -308,14 +330,18 @@ err:
 void
 handle_v_requests (char *own_buf, char *status, unsigned char *signal)
 {
+  /* vCont;action — resume with per-thread actions (step/continue) */
   if (strncmp (own_buf, "vCont;", 6) == 0)
     {
+      LOG_CMD ("vCont — resume with actions: %s", own_buf + 5);
       handle_v_cont (own_buf, status, signal);
       return;
     }
 
+  /* vCont? — query supported vCont actions */
   if (strncmp (own_buf, "vCont?", 6) == 0)
     {
+      LOG_CMD ("vCont? — query supported resume actions");
       strcpy (own_buf, "vCont;c;C;s;S");
       return;
     }
@@ -467,6 +493,13 @@ main (int argc, char *argv[])
       exit (1);
     }
 
+  /* Check LOG=1 environment variable for command logging. */
+  {
+    const char *log_env = getenv ("LOG");
+    if (log_env && log_env[0] == '1')
+      log_enabled = 1;
+  }
+
   bad_attach = 0;
   pid = 0;
   attached = 0;
@@ -523,13 +556,21 @@ main (int argc, char *argv[])
 	  ch = own_buf[i++];
 	  switch (ch)
 	    {
+	    /* q — query packets (qSupported, qC, qRcmd, etc.) */
 	    case 'q':
+	      LOG_CMD ("q — query packet: %.40s", own_buf);
 	      handle_query (own_buf);
 	      break;
+
+	    /* d — toggle remote debug output */
 	    case 'd':
+	      LOG_CMD ("d — toggle remote debug");
 	      remote_debug = !remote_debug;
 	      break;
+
+	    /* D — detach from inferior */
 	    case 'D':
+	      LOG_CMD ("D — detach from inferior");
 	      fprintf (stderr, "Detaching from inferior\n");
 	      detach_inferior ();
 	      write_ok (own_buf);
@@ -551,27 +592,36 @@ main (int argc, char *argv[])
 
 	      exit (0);
 
+	    /* [NEW] ! — extended protocol request (ack but don't enable) */
 	    case '!':
-	      /* Respond OK but don't actually enable extended protocol —
-	         we want to exit cleanly when the inferior exits.  */
+	      LOG_CMD ("! — extended protocol request (ignored)");
 	      write_ok (own_buf);
 	      break;
+
+	    /* ? — report why the target halted (stop reply) */
 	    case '?':
+	      LOG_CMD ("? — query halt reason");
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
+
+	    /* H — set thread for subsequent operations */
 	    case 'H':
+	      LOG_CMD ("H — set thread: %s", own_buf);
 	      switch (own_buf[1])
 		{
 		case 'g':
+		  /* Hg — set thread for register read/write ops */
 		  general_thread = strtol (&own_buf[2], NULL, 16);
 		  write_ok (own_buf);
 		  set_desired_inferior (1);
 		  break;
 		case 'c':
+		  /* Hc — set thread for continue/step ops */
 		  cont_thread = strtol (&own_buf[2], NULL, 16);
 		  write_ok (own_buf);
 		  break;
 		case 's':
+		  /* Hs — set thread for step ops */
 		  step_thread = strtol (&own_buf[2], NULL, 16);
 		  write_ok (own_buf);
 		  break;
@@ -582,18 +632,27 @@ main (int argc, char *argv[])
 		  break;
 		}
 	      break;
+
+	    /* g — read all registers */
 	    case 'g':
+	      LOG_CMD ("g — read all registers");
 	      set_desired_inferior (1);
 	      registers_to_string (own_buf);
 	      break;
+
+	    /* G — write all registers */
 	    case 'G':
+	      LOG_CMD ("G — write all registers");
 	      set_desired_inferior (1);
 	      registers_from_string (&own_buf[1]);
 	      write_ok (own_buf);
 	      break;
+
+	    /* [NEW] p — read single register by number */
 	    case 'p':
 	      {
 		int regno = strtol (&own_buf[1], NULL, 16);
+		LOG_CMD ("p — read register %d", regno);
 		set_desired_inferior (1);
 		if (regno >= 0 && find_register_by_number (regno) != NULL)
 		  collect_register_as_string (regno, own_buf);
@@ -601,6 +660,8 @@ main (int argc, char *argv[])
 		  write_enn (own_buf);
 	      }
 	      break;
+
+	    /* [NEW] P — write single register by number */
 	    case 'P':
 	      {
 		int regno;
@@ -608,6 +669,7 @@ main (int argc, char *argv[])
 		char regbuf[16];
 
 		regno = strtol (&own_buf[1], &regbytes, 16);
+		LOG_CMD ("P — write register %d", regno);
 		if (*regbytes == '=')
 		  regbytes++;
 
@@ -623,19 +685,30 @@ main (int argc, char *argv[])
 		  write_enn (own_buf);
 	      }
 	      break;
+
+	    /* m — read memory (m addr,length) */
 	    case 'm':
 	      decode_m_packet (&own_buf[1], &mem_addr, &len);
+	      LOG_CMD ("m — read memory at 0x%lx len %u",
+		       (unsigned long) mem_addr, len);
 	      read_inferior_memory (mem_addr, mem_buf, len);
 	      convert_int_to_ascii (mem_buf, own_buf, len);
 	      break;
+
+	    /* M — write memory (M addr,length:data) */
 	    case 'M':
 	      decode_M_packet (&own_buf[1], &mem_addr, &len, mem_buf);
+	      LOG_CMD ("M — write memory at 0x%lx len %u",
+		       (unsigned long) mem_addr, len);
 	      if (write_inferior_memory (mem_addr, mem_buf, len) == 0)
 		write_ok (own_buf);
 	      else
 		write_enn (own_buf);
 	      break;
+
+	    /* C — continue with signal */
 	    case 'C':
+	      LOG_CMD ("C — continue with signal");
 	      convert_ascii_to_int (own_buf + 1, &sig, 1);
 	      if (target_signal_to_host_p (sig))
 		signal = target_signal_to_host (sig);
@@ -647,7 +720,10 @@ main (int argc, char *argv[])
 	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
+
+	    /* S — single step with signal */
 	    case 'S':
+	      LOG_CMD ("S — step with signal");
 	      convert_ascii_to_int (own_buf + 1, &sig, 1);
 	      if (target_signal_to_host_p (sig))
 		signal = target_signal_to_host (sig);
@@ -664,14 +740,20 @@ main (int argc, char *argv[])
 	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
+
+	    /* c — continue execution */
 	    case 'c':
+	      LOG_CMD ("c — continue");
 	      set_desired_inferior (0);
 	      step_past_breakpoint (0, &status);
 	      myresume (0, 0);
 	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
+
+	    /* s — single step one instruction */
 	    case 's':
+	      LOG_CMD ("s — single step");
 	      set_desired_inferior (0);
 	      if (step_past_breakpoint (1, &status))
 		{
@@ -683,7 +765,10 @@ main (int argc, char *argv[])
 	      signal = mywait_cond (&status, 1);
 	      prepare_resume_reply (own_buf, status, signal);
 	      break;
+
+	    /* k — kill the inferior */
 	    case 'k':
+	      LOG_CMD ("k — kill inferior");
 	      fprintf (stderr, "Killing inferior\n");
 	      kill_inferior ();
 	      /* When using the extended protocol, we start up a new
@@ -704,15 +789,19 @@ main (int argc, char *argv[])
 		  exit (0);
 		  break;
 		}
+
+	    /* T — check if thread is alive */
 	    case 'T':
+	      LOG_CMD ("T — thread alive check: %s", &own_buf[1]);
 	      if (mythread_alive (strtol (&own_buf[1], NULL, 16)))
 		write_ok (own_buf);
 	      else
 		write_enn (own_buf);
 	      break;
+
+	    /* R — restart inferior (extended protocol only) */
 	    case 'R':
-	      /* Restarting the inferior is only supported in the
-	         extended protocol.  */
+	      LOG_CMD ("R — restart inferior");
 	      if (extended_protocol)
 		{
 		  kill_inferior ();
@@ -732,14 +821,18 @@ main (int argc, char *argv[])
 		  own_buf[0] = '\0';
 		  break;
 		}
+
+	    /* v — extended (long) request packets (vCont, etc.) */
 	    case 'v':
-	      /* Extended (long) request.  */
+	      LOG_CMD ("v — extended request: %.40s", own_buf);
 	      handle_v_requests (own_buf, &status, &signal);
 	      break;
+
+	    /* [NEW] Z — insert breakpoint (Z0 = software breakpoint) */
 	    case 'Z':
 	      {
-		/* Z0,addr,kind — insert software breakpoint. */
 		char type = own_buf[1];
+		LOG_CMD ("Z — insert breakpoint type=%c: %s", type, own_buf);
 		if (type == '0')
 		  {
 		    CORE_ADDR addr;
@@ -755,21 +848,22 @@ main (int argc, char *argv[])
 		  own_buf[0] = '\0'; /* unsupported Z type */
 	      }
 	      break;
+
+	    /* [NEW] z — remove breakpoint (z0 = software breakpoint) */
 	    case 'z':
 	      {
-		/* z0,addr,kind — remove software breakpoint.
-		   We don't currently support removal, just ack it. */
 		char type = own_buf[1];
+		LOG_CMD ("z — remove breakpoint type=%c: %s", type, own_buf);
 		if (type == '0')
 		  write_ok (own_buf);
 		else
 		  own_buf[0] = '\0';
 	      }
 	      break;
+
+	    /* Unknown command — respond with empty packet */
 	    default:
-	      /* It is a request we don't understand.  Respond with an
-	         empty packet so that gdb knows that we don't support this
-	         request.  */
+	      LOG_CMD ("unknown command: '%c' (0x%02x)", ch, ch);
 	      own_buf[0] = '\0';
 	      break;
 	    }
