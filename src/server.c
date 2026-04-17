@@ -104,7 +104,7 @@ handle_query (char *own_buf)
   /* [NEW] qC — return current thread ID */
   if (strcmp ("qC", own_buf) == 0)
     {
-      LOG_CMD ("qC — query current thread ID");
+      LOG_CMD ("[NEW] qC — query current thread ID");
       if (all_threads.head != NULL)
 	sprintf (own_buf, "QC%x", all_threads.head->id);
       else
@@ -115,7 +115,7 @@ handle_query (char *own_buf)
   /* [NEW] qSupported — exchange feature support with client */
   if (strncmp ("qSupported", own_buf, 10) == 0)
     {
-      LOG_CMD ("qSupported — feature negotiation");
+      LOG_CMD ("[NEW] qSupported — feature negotiation");
       sprintf (own_buf, "PacketSize=%x;QStartNoAckMode+", PBUFSIZ - 1);
       return;
     }
@@ -123,7 +123,7 @@ handle_query (char *own_buf)
   /* [NEW] qAttached — tell client we created (not attached to) the process */
   if (strcmp ("qAttached", own_buf) == 0)
     {
-      LOG_CMD ("qAttached — report process creation mode");
+      LOG_CMD ("[NEW] qAttached — report process creation mode");
       strcpy (own_buf, "0");
       return;
     }
@@ -191,7 +191,7 @@ handle_query (char *own_buf)
   /* [NEW] qRcmd — remote monitor command (conditional breakpoints, etc.) */
   if (strncmp ("qRcmd,", own_buf, 6) == 0)
     {
-      LOG_CMD ("qRcmd — remote monitor command");
+      LOG_CMD ("[NEW] qRcmd — remote monitor command");
       handle_rcmd (own_buf + 6, own_buf);
       return;
     }
@@ -199,6 +199,46 @@ handle_query (char *own_buf)
   /* Otherwise we didn't know what packet it was.  Say we didn't
      understand it.  */
   own_buf[0] = 0;
+}
+
+/* Handle all of the extended 'Q' set packets.  */
+void
+handle_set (char *own_buf)
+{
+  /* QStartNoAckMode — disable +/- ACK handshake for all subsequent packets.
+     The server advertises this in qSupported; IDA Pro sends it immediately
+     after feature negotiation.  We must reply OK *before* enabling no-ack
+     so that the OK reply itself still gets acknowledged by the client.  */
+  if (strcmp ("QStartNoAckMode", own_buf) == 0)
+    {
+      LOG_CMD ("[NEW] QStartNoAckMode — disabling ACK handshake");
+      write_ok (own_buf);
+      /* Enable no-ack BEFORE the main loop calls putpkt, so that putpkt
+         sends "$OK#..." without waiting for a '+' — IDA has already
+         switched to no-ack mode on its side.  */
+      no_ack_mode = 1;
+      return;
+    }
+
+  /* QPassSignals:XX;YY;... — signals the client handles itself; just ack.  */
+  if (strncmp ("QPassSignals:", own_buf, 13) == 0)
+    {
+      LOG_CMD ("QPassSignals — acknowledging signal pass list (no-op)");
+      write_ok (own_buf);
+      return;
+    }
+
+  /* QNonStop — non-stop mode; not supported, reply empty.  */
+  if (strncmp ("QNonStop:", own_buf, 9) == 0)
+    {
+      LOG_CMD ("QNonStop — not supported, ignoring");
+      own_buf[0] = '\0';
+      return;
+    }
+
+  /* Unknown Q packet — reply empty to indicate no support.  */
+  LOG_CMD ("unknown Q command: '%.40s'", own_buf);
+  own_buf[0] = '\0';
 }
 
 /* Parse vCont packets.  */
@@ -562,6 +602,12 @@ main (int argc, char *argv[])
 	      handle_query (own_buf);
 	      break;
 
+	    /* Q — set packets (QStartNoAckMode, QPassSignals, etc.) */
+	    case 'Q':
+	      LOG_CMD ("Q — set packet: %.40s", own_buf);
+	      handle_set (own_buf);
+	      break;
+
 	    /* d — toggle remote debug output */
 	    case 'd':
 	      LOG_CMD ("d — toggle remote debug");
@@ -592,9 +638,10 @@ main (int argc, char *argv[])
 
 	      exit (0);
 
-	    /* [NEW] ! — extended protocol request (ack but don't enable) */
+	    /* ! — extended protocol request; ack it so IDA proceeds
+	       with the already-launched process.  */
 	    case '!':
-	      LOG_CMD ("! — extended protocol request (ignored)");
+	      LOG_CMD ("! — extended protocol request");
 	      write_ok (own_buf);
 	      break;
 
@@ -652,7 +699,7 @@ main (int argc, char *argv[])
 	    case 'p':
 	      {
 		int regno = strtol (&own_buf[1], NULL, 16);
-		LOG_CMD ("p — read register %d", regno);
+		LOG_CMD ("[NEW] p — read register %d", regno);
 		set_desired_inferior (1);
 		if (regno >= 0 && find_register_by_number (regno) != NULL)
 		  collect_register_as_string (regno, own_buf);
@@ -669,7 +716,7 @@ main (int argc, char *argv[])
 		char regbuf[16];
 
 		regno = strtol (&own_buf[1], &regbytes, 16);
-		LOG_CMD ("P — write register %d", regno);
+		LOG_CMD ("[NEW] P — write register %d", regno);
 		if (*regbytes == '=')
 		  regbytes++;
 
@@ -832,7 +879,7 @@ main (int argc, char *argv[])
 	    case 'Z':
 	      {
 		char type = own_buf[1];
-		LOG_CMD ("Z — insert breakpoint type=%c: %s", type, own_buf);
+		LOG_CMD ("[NEW] Z — insert breakpoint type=%c: %s", type, own_buf);
 		if (type == '0')
 		  {
 		    CORE_ADDR addr;
@@ -853,7 +900,7 @@ main (int argc, char *argv[])
 	    case 'z':
 	      {
 		char type = own_buf[1];
-		LOG_CMD ("z — remove breakpoint type=%c: %s", type, own_buf);
+		LOG_CMD ("[NEW] z — remove breakpoint type=%c: %s", type, own_buf);
 		if (type == '0')
 		  write_ok (own_buf);
 		else

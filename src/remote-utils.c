@@ -40,6 +40,13 @@
 int remote_debug = 0;
 struct ui_file *gdb_stdlog;
 
+/* When set, suppress +/- ACK handshake (enabled by QStartNoAckMode). */
+int no_ack_mode = 0;
+
+/* Set to 1 inside handle_set(); the main loop flips no_ack_mode after the
+   OK reply has been sent (and ACKed) by putpkt.  */
+int no_ack_mode_pending = 0;
+
 static int remote_desc;
 
 /* FIXME headerize? */
@@ -183,6 +190,9 @@ void
 remote_close (void)
 {
   close (remote_desc);
+  /* Reset protocol state so the next connection starts clean. */
+  no_ack_mode = 0;
+  no_ack_mode_pending = 0;
 }
 
 /* Convert hex digit A to a number.  */
@@ -296,7 +306,8 @@ putpkt (char *buf)
 
   *p = '\0';
 
-  /* Send it over and over until we get a positive ack.  */
+  /* Send it over and over until we get a positive ack.
+     In no-ack mode (QStartNoAckMode) skip the ACK handshake entirely.  */
 
   do
     {
@@ -307,6 +318,9 @@ putpkt (char *buf)
 	  perror ("putpkt(write)");
 	  return -1;
 	}
+
+      if (no_ack_mode)
+	break;
 
       if (remote_debug)
 	{
@@ -486,17 +500,25 @@ getpkt (char *buf)
       write (remote_desc, "-", 1);
     }
 
-  if (remote_debug)
+  if (!no_ack_mode)
     {
-      fprintf (stderr, "getpkt (\"%s\");  [sending ack] \n", buf);
-      fflush (stderr);
+      if (remote_debug)
+	{
+	  fprintf (stderr, "getpkt (\"%s\");  [sending ack] \n", buf);
+	  fflush (stderr);
+	}
+
+      write (remote_desc, "+", 1);
+
+      if (remote_debug)
+	{
+	  fprintf (stderr, "[sent ack]\n");
+	  fflush (stderr);
+	}
     }
-
-  write (remote_desc, "+", 1);
-
-  if (remote_debug)
+  else if (remote_debug)
     {
-      fprintf (stderr, "[sent ack]\n");
+      fprintf (stderr, "getpkt (\"%s\");  [no-ack mode, skipping ack]\n", buf);
       fflush (stderr);
     }
 

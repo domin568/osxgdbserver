@@ -126,6 +126,9 @@ extern jmp_buf toplevel;
 
 /* Functions from remote-utils.c */
 
+extern int no_ack_mode;
+extern int no_ack_mode_pending;
+
 int putpkt (char *buf);
 int getpkt (char *buf);
 void remote_open (char *name);
