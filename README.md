@@ -20,8 +20,11 @@ Requirements: any C compiler on Mac OS X PowerPC (GCC 4.0 that ships
 with Xcode 2.x works fine).
 
 ```
-make            # → bin/gdbserver
-make clean      # remove obj/ and bin/
+make                        # → bin/gdbserver
+sudo make install           # → /usr/local/bin/gdbserver
+sudo make install PREFIX=/opt  # custom prefix
+make clean                  # remove obj/ and bin/
+sudo make uninstall         # remove from /usr/local/bin
 ```
 
 Object files go to `obj/`, the binary to `bin/gdbserver`.

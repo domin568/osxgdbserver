@@ -3,12 +3,15 @@
 # Usage:
 #   make                  (build gdbserver)
 #   make clean            (remove build artifacts)
+#   make install          (install to PREFIX, default /usr/local)
+#   make uninstall        (remove installed binary)
 #
 
 SRCDIR  = src
 INCDIR  = include
 OBJDIR  = obj
 BINDIR  = bin
+PREFIX  = /usr/local
 
 CC = cc
 CFLAGS = -g -Wall -Wimplicit
@@ -25,7 +28,7 @@ OBS = $(addprefix $(OBJDIR)/, $(addsuffix .o, $(NAMES)))
 
 LIBS = -framework System
 
-.PHONY: all clean
+.PHONY: all clean install uninstall
 
 all: $(BINDIR)/gdbserver
 
@@ -59,3 +62,12 @@ $(OBJDIR)/reg-ppc.o:        $(SRCDIR)/reg-ppc.c        $(INCDIR)/regdef.h
 
 clean:
 	rm -rf $(OBJDIR) $(BINDIR)
+
+install: $(BINDIR)/gdbserver
+	install -d $(PREFIX)/bin
+	install -m 755 $(BINDIR)/gdbserver $(PREFIX)/bin/gdbserver
+	@echo "=== gdbserver installed to $(PREFIX)/bin/gdbserver ==="
+
+uninstall:
+	rm -f $(PREFIX)/bin/gdbserver
+	@echo "=== gdbserver removed from $(PREFIX)/bin ==="
