@@ -114,6 +114,14 @@ find_breakpoint_at (CORE_ADDR where)
   return NULL;
 }
 
+void
+delete_breakpoint_at (CORE_ADDR where)
+{
+  struct breakpoint *bp = find_breakpoint_at (where);
+  if (bp != NULL)
+    delete_breakpoint (bp);
+}
+
 static void
 reinsert_breakpoint_handler (CORE_ADDR stop_pc)
 {

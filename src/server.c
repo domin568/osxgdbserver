@@ -26,6 +26,8 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <mach-o/loader.h>
 
 int cont_thread;
 int general_thread;
@@ -52,6 +54,69 @@ static int step_past_breakpoint (int is_step, char *statusp);
    when no longer debugging it.  */
 
 int signal_pid;
+
+/* Parse a Mach-O binary and return the entry point address from
+   LC_UNIXTHREAD (PPC: srr0 field).  Returns 0 on failure.  */
+static CORE_ADDR
+macho_get_entry_point (const char *path)
+{
+  int fd;
+  struct mach_header mh;
+  unsigned char *cmds, *p;
+  unsigned int i;
+  CORE_ADDR entry = 0;
+
+  fd = open (path, O_RDONLY);
+  if (fd < 0)
+    return 0;
+
+  if (read (fd, &mh, sizeof (mh)) != sizeof (mh))
+    {
+      close (fd);
+      return 0;
+    }
+
+  if (mh.magic != MH_MAGIC)
+    {
+      close (fd);
+      return 0;
+    }
+
+  cmds = malloc (mh.sizeofcmds);
+  if (cmds == NULL || read (fd, cmds, mh.sizeofcmds) != (int) mh.sizeofcmds)
+    {
+      free (cmds);
+      close (fd);
+      return 0;
+    }
+  close (fd);
+
+  p = cmds;
+  for (i = 0; i < mh.ncmds; i++)
+    {
+      struct load_command *lc = (struct load_command *) p;
+
+      if (lc->cmd == LC_UNIXTHREAD)
+        {
+          /* Layout: load_command header (8 bytes),
+             flavor (4), count (4), then thread state.
+             For PPC_THREAD_STATE, srr0 is at offset 0 in the state
+             (first field after flavor+count = offset 16 from lc start).  */
+          unsigned int *data = (unsigned int *) (p + 8);
+          unsigned int flavor = data[0];
+          (void) flavor;
+          /* srr0 is the first register in ppc_thread_state_t.
+             data[0] = flavor, data[1] = count, data[2] = srr0 */
+          entry = (CORE_ADDR) data[2];
+          break;
+        }
+
+      p += lc->cmdsize;
+    }
+
+  free (cmds);
+  return entry;
+}
 
 static unsigned char
 start_inferior (char *argv[], char *statusptr)
@@ -568,7 +633,27 @@ main (int argc, char *argv[])
       /* Wait till we are at first instruction in program.  */
       signal = start_inferior (&argv[2], &status);
 
-      /* We are now stopped at the first instruction of the target process */
+      /* We are now stopped at the first instruction of the target process.
+         This is typically inside dyld.  Try to run up to the real entry
+         point so the debugger lands in the user's code.  */
+      {
+        CORE_ADDR ep = macho_get_entry_point (argv[2]);
+        if (ep != 0)
+          {
+            fprintf (stderr, "Entry point at 0x%lx — running to it\n",
+                     (unsigned long) ep);
+            set_breakpoint_at (ep, NULL);
+            myresume (0, 0);
+            signal = mywait (&status, 0);
+            delete_breakpoint_at (ep);
+            fprintf (stderr, "Stopped at entry point 0x%lx\n",
+                     (unsigned long) ep);
+          }
+        else
+          fprintf (stderr,
+                   "Warning: could not determine entry point from '%s'\n",
+                   argv[2]);
+      }
     }
   else
     {

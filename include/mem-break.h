@@ -32,6 +32,10 @@
 void set_breakpoint_at (CORE_ADDR where,
 			void (*handler) (CORE_ADDR));
 
+/* Delete the breakpoint at WHERE, restoring the original instruction.  */
+
+void delete_breakpoint_at (CORE_ADDR where);
+
 /* Create a reinsertion breakpoint at STOP_AT for the breakpoint
    currently at STOP_PC (and temporarily remove the breakpoint at
    STOP_PC).  */
