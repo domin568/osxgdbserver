@@ -3,7 +3,7 @@
 A standalone GDB remote server for **Mac OS X up to 10.5** on **PowerPC**,
 designed to work with IDA Pro and other GDB remote protocol clients.
 
-Based on the gdbserver from [Apple's GDB fork (gdb-437, circa 2005)](https://opensource.apple.com/source/gdb/gdb-437/),
+Based on the gdbserver from [Apple's GDB fork (gdb-437, circa 2005)](https://github.com/apple-oss-distributions/gdb/tree/gdb-437),
 with the following additions:
 
 - **Darwin/Mach backend** — uses `task_for_pid`, Mach VM and PPC thread-state
