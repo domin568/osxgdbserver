@@ -29,51 +29,50 @@
 /* Create a new breakpoint at WHERE, and call HANDLER when
    it is hit.  */
 
-void set_breakpoint_at (CORE_ADDR where,
-			void (*handler) (CORE_ADDR));
+void set_breakpoint_at(CORE_ADDR where, void (*handler)(CORE_ADDR));
 
 /* Delete the breakpoint at WHERE, restoring the original instruction.  */
 
-void delete_breakpoint_at (CORE_ADDR where);
+void delete_breakpoint_at(CORE_ADDR where);
 
 /* Create a reinsertion breakpoint at STOP_AT for the breakpoint
    currently at STOP_PC (and temporarily remove the breakpoint at
    STOP_PC).  */
 
-void reinsert_breakpoint_by_bp (CORE_ADDR stop_pc, CORE_ADDR stop_at);
+void reinsert_breakpoint_by_bp(CORE_ADDR stop_pc, CORE_ADDR stop_at);
 
 /* Change the status of the breakpoint at WHERE to inserted.  */
 
-void reinsert_breakpoint (CORE_ADDR where);
+void reinsert_breakpoint(CORE_ADDR where);
 
 /* Change the status of the breakpoint at WHERE to uninserted.  */
 
-void uninsert_breakpoint (CORE_ADDR where);
+void uninsert_breakpoint(CORE_ADDR where);
 
 /* See if any breakpoint claims ownership of STOP_PC.  Call the handler for
    the breakpoint, if found.  */
 
-int check_breakpoints (CORE_ADDR stop_pc);
+int check_breakpoints(CORE_ADDR stop_pc);
 
 /* See if any breakpoints shadow the target memory area from MEM_ADDR
    to MEM_ADDR + MEM_LEN.  Update the data already read from the target
    (in BUF) if necessary.  */
 
-void check_mem_read (CORE_ADDR mem_addr, char *buf, int mem_len);
+void check_mem_read(CORE_ADDR mem_addr, char *buf, int mem_len);
 
 /* See if any breakpoints shadow the target memory area from MEM_ADDR
    to MEM_ADDR + MEM_LEN.  Update the data to be written to the target
    (in BUF) if necessary, as well as the original data for any breakpoints.  */
 
-void check_mem_write (CORE_ADDR mem_addr, char *buf, int mem_len);
+void check_mem_write(CORE_ADDR mem_addr, char *buf, int mem_len);
 
 /* Set the byte pattern to insert for memory breakpoints.  This function
    must be called before any breakpoints are set.  */
 
-void set_breakpoint_data (const char *bp_data, int bp_len);
+void set_breakpoint_data(const char *bp_data, int bp_len);
 
 /* Return non-zero if there is a currently inserted breakpoint at WHERE.  */
 
-int breakpoint_inserted_here (CORE_ADDR where);
+int breakpoint_inserted_here(CORE_ADDR where);
 
 #endif /* MEM_BREAK_H */

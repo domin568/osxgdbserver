@@ -21,26 +21,28 @@
 #ifndef DARWIN_LOW_H
 #define DARWIN_LOW_H
 
+#include "server.h"
+#include <sys/types.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 
 struct darwin_target_ops
 {
-  int num_regs;
+    int num_regs;
 
-  /* Fetch registers from the Mach thread state into the regcache.  */
-  void (*fetch_registers) (int tid);
+    /* Fetch registers from the Mach thread state into the regcache.  */
+    void (*fetch_registers)(int tid);
 
-  /* Store registers from the regcache into the Mach thread state.  */
-  void (*store_registers) (int tid);
+    /* Store registers from the regcache into the Mach thread state.  */
+    void (*store_registers)(int tid);
 
-  CORE_ADDR (*get_pc) (void);
-  void (*set_pc) (CORE_ADDR newpc);
+    CORE_ADDR (*get_pc)(void);
+    void (*set_pc)(CORE_ADDR newpc);
 
-  const char *breakpoint;
-  int breakpoint_len;
-  int decr_pc_after_break;
-  int (*breakpoint_at) (CORE_ADDR pc);
+    const char *breakpoint;
+    int breakpoint_len;
+    int decr_pc_after_break;
+    int (*breakpoint_at)(CORE_ADDR pc);
 };
 
 extern struct darwin_target_ops the_low_target;
@@ -48,18 +50,17 @@ extern struct darwin_target_ops the_low_target;
 /* Per-process information.  */
 struct darwin_process_info
 {
-  struct inferior_list_entry head;
-  pid_t pid;
-  task_t task;
-  thread_act_t thread;
-  int stopped;
-  int status;
+    struct inferior_list_entry head;
+    pid_t pid;
+    task_t task;
+    thread_act_t thread;
+    int stopped;
+    int status;
 };
 
 extern struct inferior_list all_processes;
 
 #define get_process(inf) ((struct darwin_process_info *)(inf))
-#define get_thread_process(thr) \
-  (get_process (inferior_target_data (thr)))
+#define get_thread_process(thr) (get_process(inferior_target_data(thr)))
 
 #endif /* DARWIN_LOW_H */

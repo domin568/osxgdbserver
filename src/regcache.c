@@ -19,8 +19,8 @@
    Foundation, Inc., 59 Temple Place - Suite 330,
    Boston, MA 02111-1307, USA.  */
 
-#include "server.h"
 #include "regdef.h"
+#include "server.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -31,8 +31,8 @@
 
 struct inferior_regcache_data
 {
-  int registers_valid;
-  char *registers;
+    int registers_valid;
+    char *registers;
 };
 
 static int register_bytes;
@@ -42,198 +42,192 @@ static int num_registers;
 
 const char **gdbserver_expedite_regs;
 
-static struct inferior_regcache_data *
-get_regcache (struct thread_info *inf, int fetch)
+static struct inferior_regcache_data *get_regcache(struct thread_info *inf, int fetch)
 {
-  struct inferior_regcache_data *regcache;
+    struct inferior_regcache_data *regcache;
 
-  regcache = (struct inferior_regcache_data *) inferior_regcache_data (inf);
+    regcache = (struct inferior_regcache_data *)inferior_regcache_data(inf);
 
-  if (regcache == NULL)
-    fatal ("no register cache");
-
-  /* FIXME - fetch registers for INF */
-  if (fetch && regcache->registers_valid == 0)
+    if (regcache == NULL)
     {
-      fetch_inferior_registers (0);
-      regcache->registers_valid = 1;
+        fatal("no register cache");
     }
 
-  return regcache;
-}
-
-void
-regcache_invalidate_one (struct inferior_list_entry *entry)
-{
-  struct thread_info *thread = (struct thread_info *) entry;
-  struct inferior_regcache_data *regcache;
-
-  regcache = (struct inferior_regcache_data *) inferior_regcache_data (thread);
-
-  if (regcache->registers_valid)
+    /* FIXME - fetch registers for INF */
+    if (fetch && regcache->registers_valid == 0)
     {
-      struct thread_info *saved_inferior = current_inferior;
-
-      current_inferior = thread;
-      store_inferior_registers (-1);
-      current_inferior = saved_inferior;
+        fetch_inferior_registers(0);
+        regcache->registers_valid = 1;
     }
 
-  regcache->registers_valid = 0;
+    return regcache;
 }
 
-void
-regcache_invalidate ()
+void regcache_invalidate_one(struct inferior_list_entry *entry)
 {
-  for_each_inferior (&all_threads, regcache_invalidate_one);
+    struct thread_info *thread = (struct thread_info *)entry;
+    struct inferior_regcache_data *regcache;
+
+    regcache = (struct inferior_regcache_data *)inferior_regcache_data(thread);
+
+    if (regcache->registers_valid)
+    {
+        struct thread_info *saved_inferior = current_inferior;
+
+        current_inferior = thread;
+        store_inferior_registers(-1);
+        current_inferior = saved_inferior;
+    }
+
+    regcache->registers_valid = 0;
 }
 
-int
-registers_length (void)
+void regcache_invalidate()
 {
-  return 2 * register_bytes;
+    for_each_inferior(&all_threads, regcache_invalidate_one);
 }
 
-void *
-new_register_cache (void)
+int registers_length(void)
 {
-  struct inferior_regcache_data *regcache;
+    return 2 * register_bytes;
+}
 
-  regcache = malloc (sizeof (*regcache));
+void *new_register_cache(void)
+{
+    struct inferior_regcache_data *regcache;
 
-  /* Make sure to zero-initialize the register cache when it is created,
+    regcache = malloc(sizeof(*regcache));
+
+    /* Make sure to zero-initialize the register cache when it is created,
      in case there are registers the target never fetches.  This way they'll
      read as zero instead of garbage.  */
-  regcache->registers = calloc (1, register_bytes);
-  if (regcache->registers == NULL)
-    fatal ("Could not allocate register cache.");
-
-  regcache->registers_valid = 0;
-
-  return regcache;
-}
-
-void
-free_register_cache (void *regcache_p)
-{
-  struct inferior_regcache_data *regcache
-    = (struct inferior_regcache_data *) regcache_p;
-
-  free (regcache->registers);
-  free (regcache);
-}
-
-void
-set_register_cache (struct reg *regs, int n)
-{
-  int offset, i;
-  
-  reg_defs = regs;
-  num_registers = n;
-
-  offset = 0;
-  for (i = 0; i < n; i++)
+    regcache->registers = calloc(1, register_bytes);
+    if (regcache->registers == NULL)
     {
-      regs[i].offset = offset;
-      offset += regs[i].size;
+        fatal("Could not allocate register cache.");
     }
 
-  register_bytes = offset / 8;
+    regcache->registers_valid = 0;
+
+    return regcache;
 }
 
-void
-registers_to_string (char *buf)
+void free_register_cache(void *regcache_p)
 {
-  char *registers = get_regcache (current_inferior, 1)->registers;
+    struct inferior_regcache_data *regcache = (struct inferior_regcache_data *)regcache_p;
 
-  convert_int_to_ascii (registers, buf, register_bytes);
+    free(regcache->registers);
+    free(regcache);
 }
 
-void
-registers_from_string (char *buf)
+void set_register_cache(struct reg *regs, int n)
 {
-  int len = strlen (buf);
-  char *registers = get_regcache (current_inferior, 1)->registers;
+    int offset, i;
 
-  if (len != register_bytes * 2)
+    reg_defs = regs;
+    num_registers = n;
+
+    offset = 0;
+    for (i = 0; i < n; i++)
     {
-      warning ("Wrong sized register packet (expected %d bytes, got %d)", 2*register_bytes, len);
-      if (len > register_bytes * 2)
-	len = register_bytes * 2;
+        regs[i].offset = offset;
+        offset += regs[i].size;
     }
-  convert_ascii_to_int (buf, registers, len / 2);
+
+    register_bytes = offset / 8;
 }
 
-struct reg *
-find_register_by_name (const char *name)
+void registers_to_string(char *buf)
 {
-  int i;
+    char *registers = get_regcache(current_inferior, 1)->registers;
 
-  for (i = 0; i < num_registers; i++)
-    if (!strcmp (name, reg_defs[i].name))
-      return &reg_defs[i];
-  fatal ("Unknown register %s requested", name);
-  return 0;
+    convert_int_to_ascii(registers, buf, register_bytes);
 }
 
-int
-find_regno (const char *name)
+void registers_from_string(char *buf)
 {
-  int i;
+    int len = strlen(buf);
+    char *registers = get_regcache(current_inferior, 1)->registers;
 
-  for (i = 0; i < num_registers; i++)
-    if (!strcmp (name, reg_defs[i].name))
-      return i;
-  fatal ("Unknown register %s requested", name);
-  return -1;
+    if (len != register_bytes * 2)
+    {
+        warning("Wrong sized register packet (expected %d bytes, got %d)", 2 * register_bytes, len);
+        if (len > register_bytes * 2)
+        {
+            len = register_bytes * 2;
+        }
+    }
+    convert_ascii_to_int(buf, registers, len / 2);
 }
 
-struct reg *
-find_register_by_number (int n)
+struct reg *find_register_by_name(const char *name)
 {
-  return &reg_defs[n];
+    int i;
+
+    for (i = 0; i < num_registers; i++)
+    {
+        if (!strcmp(name, reg_defs[i].name))
+        {
+            return &reg_defs[i];
+        }
+    }
+    fatal("Unknown register %s requested", name);
+    return 0;
 }
 
-int
-register_size (int n)
+int find_regno(const char *name)
 {
-  return reg_defs[n].size / 8;
+    int i;
+
+    for (i = 0; i < num_registers; i++)
+    {
+        if (!strcmp(name, reg_defs[i].name))
+        {
+            return i;
+        }
+    }
+    fatal("Unknown register %s requested", name);
+    return -1;
 }
 
-static char *
-register_data (int n, int fetch)
+struct reg *find_register_by_number(int n)
 {
-  char *registers = get_regcache (current_inferior, fetch)->registers;
-
-  return registers + (reg_defs[n].offset / 8);
+    return &reg_defs[n];
 }
 
-void
-supply_register (int n, const void *buf)
+int register_size(int n)
 {
-  memcpy (register_data (n, 0), buf, register_size (n));
+    return reg_defs[n].size / 8;
 }
 
-void
-supply_register_by_name (const char *name, const void *buf)
+static char *register_data(int n, int fetch)
 {
-  supply_register (find_regno (name), buf);
+    char *registers = get_regcache(current_inferior, fetch)->registers;
+
+    return registers + (reg_defs[n].offset / 8);
 }
 
-void
-collect_register (int n, void *buf)
+void supply_register(int n, const void *buf)
 {
-  memcpy (buf, register_data (n, 1), register_size (n));
+    memcpy(register_data(n, 0), buf, register_size(n));
 }
 
-void
-collect_register_as_string (int n, char *buf)
+void supply_register_by_name(const char *name, const void *buf)
 {
-  convert_int_to_ascii (register_data (n, 1), buf, register_size (n));
+    supply_register(find_regno(name), buf);
 }
 
-void
-collect_register_by_name (const char *name, void *buf)
+void collect_register(int n, void *buf)
 {
-  collect_register (find_regno (name), buf);
+    memcpy(buf, register_data(n, 1), register_size(n));
+}
+
+void collect_register_as_string(int n, char *buf)
+{
+    convert_int_to_ascii(register_data(n, 1), buf, register_size(n));
+}
+
+void collect_register_by_name(const char *name, void *buf)
+{
+    collect_register(find_regno(name), buf);
 }

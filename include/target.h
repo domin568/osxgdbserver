@@ -31,21 +31,21 @@
 
 struct thread_resume
 {
-  int thread;
+    int thread;
 
-  /* If non-zero, leave this thread stopped.  */
-  int leave_stopped;
+    /* If non-zero, leave this thread stopped.  */
+    int leave_stopped;
 
-  /* If non-zero, we want to single-step.  */
-  int step;
+    /* If non-zero, we want to single-step.  */
+    int step;
 
-  /* If non-zero, send this signal when we resume.  */
-  int sig;
+    /* If non-zero, send this signal when we resume.  */
+    int sig;
 };
 
 struct target_ops
 {
-  /* Start a new process.
+    /* Start a new process.
 
      PROGRAM is a path to the program to execute.
      ARGS is a standard NULL-terminated array of arguments,
@@ -54,116 +54,109 @@ struct target_ops
      Returns the new PID on success, -1 on failure.  Registers the new
      process with the process list.  */
 
-  int (*create_inferior) (char *program, char **args);
+    int (*create_inferior)(char *program, char **args);
 
-  /* Attach to a running process.
+    /* Attach to a running process.
 
      PID is the process ID to attach to, specified by the user
      or a higher layer.  */
 
-  int (*attach) (int pid);
+    int (*attach)(int pid);
 
-  /* Kill all inferiors.  */
+    /* Kill all inferiors.  */
 
-  void (*kill) (void);
+    void (*kill)(void);
 
-  /* Detach from all inferiors.  */
+    /* Detach from all inferiors.  */
 
-  void (*detach) (void);
+    void (*detach)(void);
 
-  /* Return 1 iff the thread with process ID PID is alive.  */
+    /* Return 1 iff the thread with process ID PID is alive.  */
 
-  int (*thread_alive) (int pid);
+    int (*thread_alive)(int pid);
 
-  /* Resume the inferior process.  */
+    /* Resume the inferior process.  */
 
-  void (*resume) (struct thread_resume *resume_info);
+    void (*resume)(struct thread_resume *resume_info);
 
-  /* Wait for the inferior process to change state.
+    /* Wait for the inferior process to change state.
 
      STATUSP will be filled in with a response code to send to GDB.
 
      Returns the signal which caused the process to stop.  */
 
-  unsigned char (*wait) (char *status);
+    unsigned char (*wait)(char *status);
 
-  /* Fetch registers from the inferior process.
+    /* Fetch registers from the inferior process.
 
      If REGNO is -1, fetch all registers; otherwise, fetch at least REGNO.  */
 
-  void (*fetch_registers) (int regno);
+    void (*fetch_registers)(int regno);
 
-  /* Store registers to the inferior process.
+    /* Store registers to the inferior process.
 
      If REGNO is -1, store all registers; otherwise, store at least REGNO.  */
 
-  void (*store_registers) (int regno);
+    void (*store_registers)(int regno);
 
-  /* Read memory from the inferior process.  This should generally be
+    /* Read memory from the inferior process.  This should generally be
      called through read_inferior_memory, which handles breakpoint shadowing.
 
      Read LEN bytes at MEMADDR into a buffer at MYADDR.  */
 
-  void (*read_memory) (CORE_ADDR memaddr, char *myaddr, int len);
+    void (*read_memory)(CORE_ADDR memaddr, char *myaddr, int len);
 
-  /* Write memory to the inferior process.  This should generally be
+    /* Write memory to the inferior process.  This should generally be
      called through write_inferior_memory, which handles breakpoint shadowing.
 
      Write LEN bytes from the buffer at MYADDR to MEMADDR.
 
      Returns 0 on success and errno on failure.  */
 
-  int (*write_memory) (CORE_ADDR memaddr, const char *myaddr, int len);
+    int (*write_memory)(CORE_ADDR memaddr, const char *myaddr, int len);
 
-  /* Query GDB for the values of any symbols we're interested in.
+    /* Query GDB for the values of any symbols we're interested in.
      This function is called whenever we receive a "qSymbols::"
      query, which corresponds to every time more symbols (might)
      become available.  NULL if we aren't interested in any
      symbols.  */
 
-  void (*look_up_symbols) (void);
+    void (*look_up_symbols)(void);
 
-  /* Send a signal to the inferior process, however is appropriate.  */
-  void (*send_signal) (int);
+    /* Send a signal to the inferior process, however is appropriate.  */
+    void (*send_signal)(int);
 
-  /* Read auxiliary vector data from the inferior process.
+    /* Read auxiliary vector data from the inferior process.
 
      Read LEN bytes at OFFSET into a buffer at MYADDR.  */
 
-  int (*read_auxv) (CORE_ADDR offset, char *myaddr, unsigned int len);
+    int (*read_auxv)(CORE_ADDR offset, char *myaddr, unsigned int len);
 };
 
 extern struct target_ops *the_target;
 
-void set_target_ops (struct target_ops *);
+void set_target_ops(struct target_ops *);
 
-#define create_inferior(program, args) \
-  (*the_target->create_inferior) (program, args)
+#define create_inferior(program, args) (*the_target->create_inferior)(program, args)
 
-#define myattach(pid) \
-  (*the_target->attach) (pid)
+#define myattach(pid) (*the_target->attach)(pid)
 
-#define kill_inferior() \
-  (*the_target->kill) ()
+#define kill_inferior() (*the_target->kill)()
 
-#define detach_inferior() \
-  (*the_target->detach) ()
+#define detach_inferior() (*the_target->detach)()
 
-#define mythread_alive(pid) \
-  (*the_target->thread_alive) (pid)
+#define mythread_alive(pid) (*the_target->thread_alive)(pid)
 
-#define fetch_inferior_registers(regno) \
-  (*the_target->fetch_registers) (regno)
+#define fetch_inferior_registers(regno) (*the_target->fetch_registers)(regno)
 
-#define store_inferior_registers(regno) \
-  (*the_target->store_registers) (regno)
+#define store_inferior_registers(regno) (*the_target->store_registers)(regno)
 
-unsigned char mywait (char *statusp, int connected_wait);
+unsigned char mywait(char *statusp, int connected_wait);
 
-void read_inferior_memory (CORE_ADDR memaddr, char *myaddr, int len);
+void read_inferior_memory(CORE_ADDR memaddr, char *myaddr, int len);
 
-int write_inferior_memory (CORE_ADDR memaddr, const char *myaddr, int len);
+int write_inferior_memory(CORE_ADDR memaddr, const char *myaddr, int len);
 
-void set_desired_inferior (int id);
+void set_desired_inferior(int id);
 
 #endif /* TARGET_H */

@@ -29,41 +29,41 @@
    as the file name for which the error was encountered.
    Then return to command level.  */
 
-void
-perror_with_name (char *string)
+void perror_with_name(char *string)
 {
 #ifndef STDC_HEADERS
-  extern int errno;
+    extern int errno;
 #endif
-  const char *err;
-  char *combined;
+    const char *err;
+    char *combined;
 
-  err = strerror (errno);
-  if (err == NULL)
-    err = "unknown error";
+    err = strerror(errno);
+    if (err == NULL)
+    {
+        err = "unknown error";
+    }
 
-  combined = (char *) alloca (strlen (err) + strlen (string) + 3);
-  strcpy (combined, string);
-  strcat (combined, ": ");
-  strcat (combined, err);
+    combined = (char *)alloca(strlen(err) + strlen(string) + 3);
+    strcpy(combined, string);
+    strcat(combined, ": ");
+    strcat(combined, err);
 
-  error ("%s.", combined);
+    error("%s.", combined);
 }
 
 /* Print an error message and return to command level.
    STRING is the error message, used as a fprintf string,
    and ARG is passed as an argument to it.  */
 
-void
-error (const char *string,...)
+void error(const char *string, ...)
 {
-  extern jmp_buf toplevel;
-  va_list args;
-  va_start (args, string);
-  fflush (stdout);
-  vfprintf (stderr, string, args);
-  fprintf (stderr, "\n");
-  longjmp (toplevel, 1);
+    extern jmp_buf toplevel;
+    va_list args;
+    va_start(args, string);
+    fflush(stdout);
+    vfprintf(stderr, string, args);
+    fprintf(stderr, "\n");
+    longjmp(toplevel, 1);
 }
 
 /* Print an error message and exit reporting failure.
@@ -71,26 +71,24 @@ error (const char *string,...)
    STRING and ARG are passed to fprintf.  */
 
 /* VARARGS */
-void
-fatal (const char *string,...)
+void fatal(const char *string, ...)
 {
-  va_list args;
-  va_start (args, string);
-  fprintf (stderr, "gdb: ");
-  vfprintf (stderr, string, args);
-  fprintf (stderr, "\n");
-  va_end (args);
-  exit (1);
+    va_list args;
+    va_start(args, string);
+    fprintf(stderr, "gdb: ");
+    vfprintf(stderr, string, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+    exit(1);
 }
 
 /* VARARGS */
-void
-warning (const char *string,...)
+void warning(const char *string, ...)
 {
-  va_list args;
-  va_start (args, string);
-  fprintf (stderr, "gdb: ");
-  vfprintf (stderr, string, args);
-  fprintf (stderr, "\n");
-  va_end (args);
+    va_list args;
+    va_start(args, string);
+    fprintf(stderr, "gdb: ");
+    vfprintf(stderr, string, args);
+    fprintf(stderr, "\n");
+    va_end(args);
 }

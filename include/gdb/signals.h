@@ -52,9 +52,9 @@
    target_signal_to_string.  */
 
 enum target_signal
-  {
+{
     /* Used some places (e.g. stop_signal) to record the concept that
-       there is no signal.  */
+     there is no signal.  */
     TARGET_SIGNAL_0 = 0,
     TARGET_SIGNAL_FIRST = 0,
     TARGET_SIGNAL_HUP = 1,
@@ -138,9 +138,9 @@ enum target_signal
     TARGET_SIGNAL_CANCEL = 76,
 
     /* Yes, this pains me, too.  But LynxOS didn't have SIG32, and now
-       GNU/Linux does, and we can't disturb the numbering, since it's
-       part of the remote protocol.  Note that in some GDB's
-       TARGET_SIGNAL_REALTIME_32 is number 76.  */
+     GNU/Linux does, and we can't disturb the numbering, since it's
+     part of the remote protocol.  Note that in some GDB's
+     TARGET_SIGNAL_REALTIME_32 is number 76.  */
     TARGET_SIGNAL_REALTIME_32,
     /* Yet another pain, IRIX 6 has SIG64. */
     TARGET_SIGNAL_REALTIME_64,
@@ -215,12 +215,12 @@ enum target_signal
     TARGET_SIGNAL_UNKNOWN,
 
     /* Use whatever signal we use when one is not specifically specified
-       (for passing to proceed and so on).  */
+     (for passing to proceed and so on).  */
     TARGET_SIGNAL_DEFAULT,
 
     /* Mach exceptions.  In versions of GDB before 5.2, these were just before
-       TARGET_SIGNAL_INFO if you were compiling on a Mach host (and missing
-       otherwise).  */
+     TARGET_SIGNAL_INFO if you were compiling on a Mach host (and missing
+     otherwise).  */
     TARGET_EXC_BAD_ACCESS,
     TARGET_EXC_BAD_INSTRUCTION,
     TARGET_EXC_ARITHMETIC,
@@ -232,6 +232,6 @@ enum target_signal
 
     /* Last and unused enum value, for sizing arrays, etc.  */
     TARGET_SIGNAL_LAST
-  };
+};
 
 #endif /* #ifndef GDB_SIGNALS_H */

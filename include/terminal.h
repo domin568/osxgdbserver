@@ -18,7 +18,7 @@
    Foundation, Inc., 59 Temple Place - Suite 330,
    Boston, MA 02111-1307, USA.  */
 
-#if !defined (TERMINAL_H)
+#if !defined(TERMINAL_H)
 #define TERMINAL_H 1
 
 /* Autoconf will have defined HAVE_TERMIOS_H, HAVE_TERMIO_H,
