@@ -103,15 +103,8 @@ static CORE_ADDR macho_get_entry_point(const char *path)
 
         if (lc->cmd == LC_UNIXTHREAD)
         {
-            /* Layout: load_command header (8 bytes),
-         flavor (4), count (4), then thread state.
-         For PPC_THREAD_STATE, srr0 is at offset 0 in the state
-         (first field after flavor+count = offset 16 from lc start).  */
+            /* PPC_THREAD_STATE layout: flavor, count, srr0, ... */
             unsigned int *data = (unsigned int *)(p + 8);
-            unsigned int flavor = data[0];
-            (void)flavor;
-            /* srr0 is the first register in ppc_thread_state_t.
-         data[0] = flavor, data[1] = count, data[2] = srr0 */
             entry = (CORE_ADDR)data[2];
             break;
         }
@@ -136,15 +129,11 @@ static unsigned char start_inferior(char *argv[], char *statusptr)
     signal(SIGTTIN, SIG_IGN);
     tcsetpgrp(fileno(stderr), signal_pid);
 
-    /* Wait till we are at 1st instruction in program, return signal number.  */
     return mywait(statusptr, 0);
 }
 
 static int attach_inferior(int pid, char *statusptr, unsigned char *sigptr)
 {
-    /* myattach should return -1 if attaching is unsupported,
-     0 if it succeeded, and call error() otherwise.  */
-
     if (myattach(pid) != 0)
     {
         return -1;
@@ -152,9 +141,6 @@ static int attach_inferior(int pid, char *statusptr, unsigned char *sigptr)
 
     fprintf(stderr, "Attached; pid = %d\n", pid);
 
-    /* FIXME - It may be that we should get the SIGNAL_PID from the
-     attach function, so that it can be the main thread instead of
-     whichever we were told to attach to.  */
     signal_pid = pid;
 
     *sigptr = mywait(statusptr, 0);
@@ -164,12 +150,10 @@ static int attach_inferior(int pid, char *statusptr, unsigned char *sigptr)
 
 extern int remote_debug;
 
-/* Handle all of the extended 'q' packets.  */
 void handle_query(char *own_buf)
 {
     static struct inferior_list_entry *thread_ptr;
 
-    /* [NEW] qC — return current thread ID */
     if (strcmp("qC", own_buf) == 0)
     {
         LOG_CMD("[NEW] qC — query current thread ID");
@@ -184,7 +168,6 @@ void handle_query(char *own_buf)
         return;
     }
 
-    /* [NEW] qSupported — exchange feature support with client */
     if (strncmp("qSupported", own_buf, 10) == 0)
     {
         LOG_CMD("[NEW] qSupported — feature negotiation");
@@ -192,7 +175,6 @@ void handle_query(char *own_buf)
         return;
     }
 
-    /* [NEW] qAttached — tell client we created (not attached to) the process */
     if (strcmp("qAttached", own_buf) == 0)
     {
         LOG_CMD("[NEW] qAttached — report process creation mode");
@@ -200,7 +182,6 @@ void handle_query(char *own_buf)
         return;
     }
 
-    /* qSymbol — client offers to look up symbols for us */
     if (strcmp("qSymbol::", own_buf) == 0)
     {
         LOG_CMD("qSymbol — symbol lookup offer");
@@ -213,7 +194,6 @@ void handle_query(char *own_buf)
         return;
     }
 
-    /* qfThreadInfo — first thread in thread list query */
     if (strcmp("qfThreadInfo", own_buf) == 0)
     {
         LOG_CMD("qfThreadInfo — first thread info query");
@@ -223,7 +203,6 @@ void handle_query(char *own_buf)
         return;
     }
 
-    /* qsThreadInfo — subsequent threads in thread list query */
     if (strcmp("qsThreadInfo", own_buf) == 0)
     {
         LOG_CMD("qsThreadInfo — subsequent thread info query");
@@ -240,7 +219,6 @@ void handle_query(char *own_buf)
         }
     }
 
-    /* qPart:auxv:read — read auxiliary vector data */
     if (the_target->read_auxv != NULL && strncmp("qPart:auxv:read::", own_buf, 17) == 0)
     {
         char data[(PBUFSIZ - 1) / 2];
@@ -248,7 +226,7 @@ void handle_query(char *own_buf)
         unsigned int len;
         int n;
         LOG_CMD("qPart:auxv:read — read auxiliary vector");
-        decode_m_packet(&own_buf[17], &ofs, &len); /* "OFS,LEN" */
+        decode_m_packet(&own_buf[17], &ofs, &len);
         if (len > sizeof data)
         {
             len = sizeof data;
@@ -269,7 +247,6 @@ void handle_query(char *own_buf)
         return;
     }
 
-    /* [NEW] qRcmd — remote monitor command (conditional breakpoints, etc.) */
     if (strncmp("qRcmd,", own_buf, 6) == 0)
     {
         LOG_CMD("[NEW] qRcmd — remote monitor command");
@@ -277,30 +254,22 @@ void handle_query(char *own_buf)
         return;
     }
 
-    /* Otherwise we didn't know what packet it was.  Say we didn't
-     understand it.  */
+    /* Unknown packet — empty reply means "not supported".  */
     own_buf[0] = 0;
 }
 
-/* Handle all of the extended 'Q' set packets.  */
 void handle_set(char *own_buf)
 {
-    /* QStartNoAckMode — disable +/- ACK handshake for all subsequent packets.
-     The server advertises this in qSupported; IDA Pro sends it immediately
-     after feature negotiation.  We must reply OK *before* enabling no-ack
-     so that the OK reply itself still gets acknowledged by the client.  */
+    /* QStartNoAckMode: reply OK *before* enabling no-ack so that the OK
+       reply itself is still acknowledged by the client.  */
     if (strcmp("QStartNoAckMode", own_buf) == 0)
     {
         LOG_CMD("[NEW] QStartNoAckMode — disabling ACK handshake");
         write_ok(own_buf);
-        /* Enable no-ack BEFORE the main loop calls putpkt, so that putpkt
-       sends "$OK#..." without waiting for a '+' — IDA has already
-       switched to no-ack mode on its side.  */
         no_ack_mode = 1;
         return;
     }
 
-    /* QPassSignals:XX;YY;... — signals the client handles itself; just ack.  */
     if (strncmp("QPassSignals:", own_buf, 13) == 0)
     {
         LOG_CMD("QPassSignals — acknowledging signal pass list (no-op)");
@@ -308,7 +277,6 @@ void handle_set(char *own_buf)
         return;
     }
 
-    /* QNonStop — non-stop mode; not supported, reply empty.  */
     if (strncmp("QNonStop:", own_buf, 9) == 0)
     {
         LOG_CMD("QNonStop — not supported, ignoring");
@@ -316,7 +284,6 @@ void handle_set(char *own_buf)
         return;
     }
 
-    /* Unknown Q packet — reply empty to indicate no support.  */
     LOG_CMD("unknown Q command: '%.40s'", own_buf);
     own_buf[0] = '\0';
 }
@@ -328,8 +295,7 @@ void handle_v_cont(char *own_buf, char *status, unsigned char *signal)
     int n = 0, i = 0;
     struct thread_resume *resume_info, default_action;
 
-    /* Count the number of semicolons in the packet.  There should be one
-     for every action.  */
+    /* One action per ';' in the packet, plus one default-action slot.  */
     p = &own_buf[5];
     while (p)
     {
@@ -337,9 +303,6 @@ void handle_v_cont(char *own_buf, char *status, unsigned char *signal)
         p++;
         p = strchr(p, ';');
     }
-    /* Allocate room for one extra action, for the default remain-stopped
-     behavior; if no default action is in the list, we'll need the extra
-     slot.  */
     resume_info = malloc((n + 1) * sizeof(resume_info[0]));
 
     default_action.thread = -1;
@@ -394,9 +357,7 @@ void handle_v_cont(char *own_buf, char *status, unsigned char *signal)
         {
             resume_info[i].thread = -1;
             default_action = resume_info[i];
-
-            /* Note: we don't increment i here, we'll overwrite this entry
-         the next time through.  */
+            /* Don't increment i; this slot will be reused.  */
         }
         else if (p[0] == ':')
         {
@@ -417,7 +378,6 @@ void handle_v_cont(char *own_buf, char *status, unsigned char *signal)
 
     resume_info[i] = default_action;
 
-    /* Still used in occasional places in the backend.  */
     if (n == 1 && resume_info[0].thread != -1)
     {
         cont_thread = resume_info[0].thread;
@@ -428,8 +388,8 @@ void handle_v_cont(char *own_buf, char *status, unsigned char *signal)
     }
     set_desired_inferior(0);
 
-    /* If the first action is a step and PC is at a breakpoint,
-     step past it first — the step-past IS the user's step. */
+    /* If the first action is a step and PC sits on a breakpoint, the
+       step-past IS the user's step.  */
     if (n >= 1 && resume_info[0].step)
     {
         char stepstat = 'T';
@@ -457,16 +417,13 @@ void handle_v_cont(char *own_buf, char *status, unsigned char *signal)
     return;
 
 err:
-    /* No other way to report an error... */
     strcpy(own_buf, "");
     free(resume_info);
     return;
 }
 
-/* Handle all of the extended 'v' packets.  */
 void handle_v_requests(char *own_buf, char *status, unsigned char *signal)
 {
-    /* vCont;action — resume with per-thread actions (step/continue) */
     if (strncmp(own_buf, "vCont;", 6) == 0)
     {
         LOG_CMD("vCont — resume with actions: %s", own_buf + 5);
@@ -474,7 +431,6 @@ void handle_v_requests(char *own_buf, char *status, unsigned char *signal)
         return;
     }
 
-    /* vCont? — query supported vCont actions */
     if (strncmp(own_buf, "vCont?", 6) == 0)
     {
         LOG_CMD("vCont? — query supported resume actions");
@@ -482,8 +438,6 @@ void handle_v_requests(char *own_buf, char *status, unsigned char *signal)
         return;
     }
 
-    /* Otherwise we didn't know what packet it was.  Say we didn't
-     understand it.  */
     own_buf[0] = 0;
     return;
 }
@@ -512,10 +466,8 @@ void myresume(int step, int sig)
 static int attached;
 
 /* If the current PC is sitting on an inserted software breakpoint,
-   temporarily remove it, single-step the real instruction, and
-   reinsert it.  Returns 1 if a breakpoint was stepped past, 0 if not.
-   When stepping (is_step=1), the single-step IS the user's step,
-   so the caller should skip its own myresume.  */
+   temporarily remove it, single-step the real instruction, and reinsert
+   it.  Returns 1 if a breakpoint was stepped past, 0 if not.  */
 static int step_past_breakpoint(int is_step, char *statusp)
 {
     unsigned int pc32 = 0;
@@ -531,22 +483,17 @@ static int step_past_breakpoint(int is_step, char *statusp)
         return 0;
     }
 
-    /* Remove the trap, step the real instruction, put it back. */
     uninsert_breakpoint(pc);
     myresume(1, 0);
     sig = mywait(statusp, 1);
     reinsert_breakpoint(pc);
 
-    /* Re-fetch registers so the regcache reflects post-step state.
-     prepare_resume_reply reads expedited regs (r1, pc) from it. */
+    /* Re-fetch registers so the regcache reflects post-step state;
+       prepare_resume_reply reads expedited regs (r1, pc) from it.  */
     set_desired_inferior(1);
 
-    if (is_step)
-    {
-        return 1; /* The step-past IS the user's single step. */
-    }
-
-    /* For continue: we stepped past, now caller will continue. */
+    (void)is_step;
+    (void)sig;
     return 1;
 }
 
@@ -559,11 +506,8 @@ static void gdbserver_usage(void)
           "HOST:PORT to listen for a TCP connection.\n");
 }
 
-/* Wait for the inferior, checking conditional breakpoints.
-   When a cond_bp fires but its condition is NOT met, silently
-   step over the breakpoint and continue.  Returns only when:
-   - the process exits/dies, or
-   - a stop occurs that is NOT a cond_bp with unmet condition.  */
+/* Wait for the inferior, transparently handling conditional breakpoints
+   whose conditions are not met (silently step over and continue).  */
 static unsigned char mywait_cond(char *statusp, int connected)
 {
     unsigned char sig;
@@ -572,14 +516,12 @@ static unsigned char mywait_cond(char *statusp, int connected)
     {
         sig = mywait(statusp, connected);
 
-        /* Only check conditional BPs on SIGTRAP stops. */
         if (*statusp == 'T' && sig == TARGET_SIGNAL_TRAP)
         {
             unsigned int pc32 = 0;
             CORE_ADDR pc;
             int cond;
 
-            /* Fetch registers so we can read PC and condition regs. */
             set_desired_inferior(1);
             collect_register_by_name("pc", &pc32);
             pc = (CORE_ADDR)pc32;
@@ -587,39 +529,524 @@ static unsigned char mywait_cond(char *statusp, int connected)
             cond = check_cond_bp(pc);
             if (cond == 2)
             {
-                /* Condition not met — step over breakpoint and continue. */
+                /* Condition not met — step over and continue.  */
                 uninsert_breakpoint(pc);
-
-                /* Single-step past the original instruction. */
                 myresume(1, 0);
                 sig = mywait(statusp, connected);
-
                 reinsert_breakpoint(pc);
-
-                /* Invalidate register cache before continuing. */
                 regcache_invalidate();
-
-                /* Now continue running. */
                 myresume(0, 0);
                 continue;
             }
-            /* cond == 0 (not a cond_bp) or cond == 1 (condition met) → stop. */
         }
 
         return sig;
     }
 }
 
+/* ---------------- Per-packet handlers ----------------------------------- */
+
+static void handle_d_toggle_debug(char *buf)
+{
+    LOG_CMD("d — toggle remote debug");
+    remote_debug = !remote_debug;
+    (void)buf;
+}
+
+static void handle_D_detach(char *buf)
+{
+    LOG_CMD("D — detach from inferior");
+    fprintf(stderr, "Detaching from inferior\n");
+    detach_inferior();
+    write_ok(buf);
+    putpkt(buf);
+    remote_close();
+
+    if (!attached)
+    {
+        int wstatus, ret;
+        do
+        {
+            ret = waitpid(signal_pid, &wstatus, 0);
+            if (WIFEXITED(wstatus) || WIFSIGNALED(wstatus))
+            {
+                break;
+            }
+        } while (ret != -1 || errno != ECHILD);
+    }
+    exit(0);
+}
+
+static void handle_question(char *buf, char status, unsigned char sig)
+{
+    LOG_CMD("? — query halt reason");
+    prepare_resume_reply(buf, status, sig);
+}
+
+static void handle_H_set_thread(char *buf)
+{
+    LOG_CMD("H — set thread: %s", buf);
+    switch (buf[1])
+    {
+        case 'g':
+            general_thread = strtol(&buf[2], NULL, 16);
+            write_ok(buf);
+            set_desired_inferior(1);
+            break;
+        case 'c':
+            cont_thread = strtol(&buf[2], NULL, 16);
+            write_ok(buf);
+            break;
+        case 's':
+            step_thread = strtol(&buf[2], NULL, 16);
+            write_ok(buf);
+            break;
+        default:
+            buf[0] = '\0';
+            break;
+    }
+}
+
+static void handle_g_read_regs(char *buf)
+{
+    LOG_CMD("g — read all registers");
+    set_desired_inferior(1);
+    registers_to_string(buf);
+}
+
+static void handle_G_write_regs(char *buf)
+{
+    LOG_CMD("G — write all registers");
+    set_desired_inferior(1);
+    registers_from_string(&buf[1]);
+    write_ok(buf);
+}
+
+static void handle_p_read_reg(char *buf)
+{
+    int regno = strtol(&buf[1], NULL, 16);
+    LOG_CMD("p — read register %d", regno);
+    set_desired_inferior(1);
+    if (regno >= 0 && find_register_by_number(regno) != NULL)
+    {
+        collect_register_as_string(regno, buf);
+    }
+    else
+    {
+        write_enn(buf);
+    }
+}
+
+static void handle_P_write_reg(char *buf)
+{
+    char *regbytes;
+    int regno = strtol(&buf[1], &regbytes, 16);
+    LOG_CMD("P — write register %d", regno);
+    if (*regbytes == '=')
+    {
+        regbytes++;
+    }
+    set_desired_inferior(1);
+    if (regno >= 0 && find_register_by_number(regno) != NULL)
+    {
+        char regbuf[16];
+        int regsize = register_size(regno);
+        convert_ascii_to_int(regbytes, regbuf, regsize);
+        supply_register(regno, regbuf);
+        write_ok(buf);
+    }
+    else
+    {
+        write_enn(buf);
+    }
+}
+
+static void handle_m_read_mem(char *buf, char *mem_buf)
+{
+    CORE_ADDR addr;
+    unsigned int len;
+    decode_m_packet(&buf[1], &addr, &len);
+    LOG_CMD("m — read memory at 0x%lx len %u", (unsigned long)addr, len);
+    read_inferior_memory(addr, mem_buf, len);
+    convert_int_to_ascii(mem_buf, buf, len);
+}
+
+static void handle_M_write_mem(char *buf, char *mem_buf)
+{
+    CORE_ADDR addr;
+    unsigned int len;
+    decode_M_packet(&buf[1], &addr, &len, mem_buf);
+    LOG_CMD("M — write memory at 0x%lx len %u", (unsigned long)addr, len);
+    if (write_inferior_memory(addr, mem_buf, len) == 0)
+    {
+        write_ok(buf);
+    }
+    else
+    {
+        write_enn(buf);
+    }
+}
+
+static unsigned char parse_signal_byte(const char *p)
+{
+    unsigned char sig;
+    convert_ascii_to_int((char *)p, &sig, 1);
+    if (target_signal_to_host_p(sig))
+    {
+        return target_signal_to_host(sig);
+    }
+    return 0;
+}
+
+static void handle_C_continue_signal(char *buf, char *status, unsigned char *sig_out)
+{
+    unsigned char sig = parse_signal_byte(buf + 1);
+    LOG_CMD("C — continue with signal %u", sig);
+    set_desired_inferior(0);
+    step_past_breakpoint(0, status);
+    myresume(0, sig);
+    *sig_out = mywait_cond(status, 1);
+    prepare_resume_reply(buf, *status, *sig_out);
+}
+
+static void handle_S_step_signal(char *buf, char *status, unsigned char *sig_out)
+{
+    unsigned char sig = parse_signal_byte(buf + 1);
+    LOG_CMD("S — step with signal %u", sig);
+    set_desired_inferior(0);
+    if (step_past_breakpoint(1, status))
+    {
+        *sig_out = TARGET_SIGNAL_TRAP;
+        prepare_resume_reply(buf, *status, *sig_out);
+        return;
+    }
+    myresume(1, sig);
+    *sig_out = mywait_cond(status, 1);
+    prepare_resume_reply(buf, *status, *sig_out);
+}
+
+static void handle_c_continue(char *buf, char *status, unsigned char *sig_out)
+{
+    LOG_CMD("c — continue");
+    set_desired_inferior(0);
+    step_past_breakpoint(0, status);
+    myresume(0, 0);
+    *sig_out = mywait_cond(status, 1);
+    prepare_resume_reply(buf, *status, *sig_out);
+}
+
+static void handle_s_step(char *buf, char *status, unsigned char *sig_out)
+{
+    LOG_CMD("s — single step");
+    set_desired_inferior(0);
+    if (step_past_breakpoint(1, status))
+    {
+        *sig_out = TARGET_SIGNAL_TRAP;
+        prepare_resume_reply(buf, *status, *sig_out);
+        return;
+    }
+    myresume(1, 0);
+    *sig_out = mywait_cond(status, 1);
+    prepare_resume_reply(buf, *status, *sig_out);
+}
+
+/* Returns 1 if the inferior was restarted (caller should `goto restart`).  */
+static int handle_k_kill(char *buf, char **argv, char *status, unsigned char *sig_out)
+{
+    LOG_CMD("k — kill inferior");
+    fprintf(stderr, "Killing inferior\n");
+    kill_inferior();
+
+    if (extended_protocol)
+    {
+        write_ok(buf);
+        fprintf(stderr, "GDBserver restarting\n");
+        *sig_out = start_inferior(&argv[2], status);
+        return 1;
+    }
+    exit(0);
+}
+
+static void handle_T_thread_alive(char *buf)
+{
+    LOG_CMD("T — thread alive check: %s", &buf[1]);
+    if (mythread_alive(strtol(&buf[1], NULL, 16)))
+    {
+        write_ok(buf);
+    }
+    else
+    {
+        write_enn(buf);
+    }
+}
+
+/* Returns 1 if the inferior was restarted.  */
+static int handle_R_restart(char *buf, char **argv, char *status, unsigned char *sig_out)
+{
+    LOG_CMD("R — restart inferior");
+    if (extended_protocol)
+    {
+        kill_inferior();
+        write_ok(buf);
+        fprintf(stderr, "GDBserver restarting\n");
+        *sig_out = start_inferior(&argv[2], status);
+        return 1;
+    }
+    buf[0] = '\0';
+    return 0;
+}
+
+static void handle_Z_insert_bp(char *buf)
+{
+    char type = buf[1];
+    LOG_CMD("Z — insert breakpoint type=%c: %s", type, buf);
+    if (type == '0')
+    {
+        char *p = &buf[3];
+        CORE_ADDR addr = (CORE_ADDR)strtoul(p, &p, 16);
+        if (*p == ',')
+        {
+            p++;
+        }
+        (void)strtoul(p, NULL, 16); /* kind, unused */
+        set_breakpoint_at(addr, NULL);
+        write_ok(buf);
+    }
+    else
+    {
+        buf[0] = '\0';
+    }
+}
+
+static void handle_z_remove_bp(char *buf)
+{
+    char type = buf[1];
+    LOG_CMD("z — remove breakpoint type=%c: %s", type, buf);
+    if (type == '0')
+    {
+        write_ok(buf);
+    }
+    else
+    {
+        buf[0] = '\0';
+    }
+}
+
+/* Dispatch a single packet.  Returns 1 if the inferior was restarted
+   (caller should `goto restart` and skip the reply send).  */
+static int handle_packet(char *buf, char **argv, char *status, unsigned char *sig_out,
+                         char *mem_buf)
+{
+    switch (buf[0])
+    {
+        case 'q':
+            LOG_CMD("q — query: %.40s", buf);
+            handle_query(buf);
+            return 0;
+        case 'Q':
+            LOG_CMD("Q — set: %.40s", buf);
+            handle_set(buf);
+            return 0;
+        case 'd':
+            handle_d_toggle_debug(buf);
+            return 0;
+        case 'D':
+            handle_D_detach(buf); /* never returns */
+            return 0;
+        case '!':
+            LOG_CMD("! — extended protocol");
+            write_ok(buf);
+            return 0;
+        case '?':
+            handle_question(buf, *status, *sig_out);
+            return 0;
+        case 'H':
+            handle_H_set_thread(buf);
+            return 0;
+        case 'g':
+            handle_g_read_regs(buf);
+            return 0;
+        case 'G':
+            handle_G_write_regs(buf);
+            return 0;
+        case 'p':
+            handle_p_read_reg(buf);
+            return 0;
+        case 'P':
+            handle_P_write_reg(buf);
+            return 0;
+        case 'm':
+            handle_m_read_mem(buf, mem_buf);
+            return 0;
+        case 'M':
+            handle_M_write_mem(buf, mem_buf);
+            return 0;
+        case 'C':
+            handle_C_continue_signal(buf, status, sig_out);
+            return 0;
+        case 'S':
+            handle_S_step_signal(buf, status, sig_out);
+            return 0;
+        case 'c':
+            handle_c_continue(buf, status, sig_out);
+            return 0;
+        case 's':
+            handle_s_step(buf, status, sig_out);
+            return 0;
+        case 'k':
+            return handle_k_kill(buf, argv, status, sig_out);
+        case 'T':
+            handle_T_thread_alive(buf);
+            return 0;
+        case 'R':
+            return handle_R_restart(buf, argv, status, sig_out);
+        case 'v':
+            LOG_CMD("v — extended: %.40s", buf);
+            handle_v_requests(buf, status, sig_out);
+            return 0;
+        case 'Z':
+            handle_Z_insert_bp(buf);
+            return 0;
+        case 'z':
+            handle_z_remove_bp(buf);
+            return 0;
+        default:
+            LOG_CMD("unknown command: '%c' (0x%02x)", buf[0], buf[0]);
+            buf[0] = '\0';
+            return 0;
+    }
+}
+
+/* React to inferior exit/termination.  Returns 1 if a restart was triggered. */
+static int handle_terminated_inferior(char *buf, char **argv, char *status, unsigned char *sig_out)
+{
+    if (*status == 'W')
+    {
+        fprintf(stderr, "\nChild exited with status %d\n", *sig_out);
+    }
+    else if (*status == 'X')
+    {
+        fprintf(stderr, "\nChild terminated with signal = 0x%x\n", *sig_out);
+    }
+    else
+    {
+        return 0;
+    }
+
+    if (extended_protocol)
+    {
+        fprintf(stderr, "Killing inferior\n");
+        kill_inferior();
+        write_ok(buf);
+        fprintf(stderr, "GDBserver restarting\n");
+        *sig_out = start_inferior(&argv[2], status);
+        return 1;
+    }
+
+    fprintf(stderr, "GDBserver exiting\n");
+    exit(0);
+}
+
+/* Parse argv. Returns 0 = launch new process, 1 = attach mode,
+   -1 = bad usage.  On success, writes the pid to *out_pid (0 for launch).  */
+static int parse_args(int argc, char *argv[], int *out_pid)
+{
+    *out_pid = 0;
+    if (argc < 3)
+    {
+        return -1;
+    }
+    if (strcmp(argv[2], "--attach") != 0)
+    {
+        return 0;
+    }
+    if (argc != 4 || argv[3][0] == '\0')
+    {
+        return -1;
+    }
+    {
+        char *end;
+        unsigned long pid = strtoul(argv[3], &end, 10);
+        if (pid == 0 || *end != '\0')
+        {
+            return -1;
+        }
+        *out_pid = (int)pid;
+    }
+    return 1;
+}
+
+/* After the inferior stops in dyld, run to the program's real entry
+   point so the user lands in their own code.  */
+static void run_to_entry_point(const char *path, char *status, unsigned char *sig_out)
+{
+    CORE_ADDR ep = macho_get_entry_point(path);
+    if (ep == 0)
+    {
+        fprintf(stderr, "Warning: could not determine entry point from '%s'\n", path);
+        return;
+    }
+    fprintf(stderr, "Entry point at 0x%lx — running to it\n", (unsigned long)ep);
+    set_breakpoint_at(ep, NULL);
+    myresume(0, 0);
+    *sig_out = mywait(status, 0);
+    delete_breakpoint_at(ep);
+    fprintf(stderr, "Stopped at entry point 0x%lx\n", (unsigned long)ep);
+}
+
+/* ---------------- main and its helpers --------------------------------- */
+
+static void init_logging(void)
+{
+    const char *log_env = getenv("LOG");
+    log_enabled = (log_env && log_env[0] == '1');
+}
+
+/* Bring up the debug target: either launch a new inferior and run it to
+   its real entry point, or attach to an existing pid.  */
+static void prepare_inferior(int argc, char *argv[], int pid, char *status, unsigned char *sig)
+{
+    (void)argc;
+    if (!attached)
+    {
+        *sig = start_inferior(&argv[2], status);
+        run_to_entry_point(argv[2], status, sig);
+        return;
+    }
+    if (attach_inferior(pid, status, sig) < 0)
+    {
+        error("Attaching not supported on this target");
+    }
+}
+
+/* Run a single GDB session: pump packets until the connection drops or
+   the inferior is restarted (in which case we re-enter the loop).  */
+static void packet_loop(char *own_buf, char *mem_buf, char **argv, char *status,
+                        unsigned char *sig)
+{
+restart:
+    setjmp(toplevel);
+    while (getpkt(own_buf) > 0)
+    {
+        if (handle_packet(own_buf, argv, status, sig, mem_buf))
+        {
+            goto restart;
+        }
+        putpkt(own_buf);
+        if (handle_terminated_inferior(own_buf, argv, status, sig))
+        {
+            goto restart;
+        }
+    }
+}
+
 int main(int argc, char *argv[])
 {
-    char ch, status, *own_buf, mem_buf[2000];
-    int i = 0;
-    unsigned char signal;
-    unsigned int len;
-    CORE_ADDR mem_addr;
-    int bad_attach;
+    char status;
+    unsigned char sig = 0;
+    char *own_buf;
+    char mem_buf[2000];
     int pid;
-    char *arg_end;
 
     if (setjmp(toplevel))
     {
@@ -627,493 +1054,38 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    /* Check LOG=1 environment variable for command logging. */
-    {
-        const char *log_env = getenv("LOG");
-        if (log_env && log_env[0] == '1')
-        {
-            log_enabled = 1;
-        }
-    }
+    init_logging();
 
-    bad_attach = 0;
-    pid = 0;
-    attached = 0;
-    if (argc >= 3 && strcmp(argv[2], "--attach") == 0)
+    switch (parse_args(argc, argv, &pid))
     {
-        if (argc == 4 && argv[3] != '\0' && (pid = strtoul(argv[3], &arg_end, 10)) != 0 &&
-            *arg_end == '\0')
-        {
-            ;
-        }
-        else
-        {
-            bad_attach = 1;
-        }
-    }
-
-    if (argc < 3 || bad_attach)
-    {
-        gdbserver_usage();
+        case -1:
+            gdbserver_usage();
+            break;
+        case 1:
+            attached = 1;
+            break;
+        default:
+            attached = 0;
+            break;
     }
 
     initialize_low();
-
     own_buf = malloc(PBUFSIZ);
 
-    if (pid == 0)
-    {
-        /* Wait till we are at first instruction in program.  */
-        signal = start_inferior(&argv[2], &status);
+    prepare_inferior(argc, argv, pid, &status, &sig);
 
-        /* We are now stopped at the first instruction of the target process.
-       This is typically inside dyld.  Try to run up to the real entry
-       point so the debugger lands in the user's code.  */
-        {
-            CORE_ADDR ep = macho_get_entry_point(argv[2]);
-            if (ep != 0)
-            {
-                fprintf(stderr, "Entry point at 0x%lx — running to it\n", (unsigned long)ep);
-                set_breakpoint_at(ep, NULL);
-                myresume(0, 0);
-                signal = mywait(&status, 0);
-                delete_breakpoint_at(ep);
-                fprintf(stderr, "Stopped at entry point 0x%lx\n", (unsigned long)ep);
-            }
-            else
-            {
-                fprintf(stderr, "Warning: could not determine entry point from '%s'\n", argv[2]);
-            }
-        }
-    }
-    else
-    {
-        switch (attach_inferior(pid, &status, &signal))
-        {
-            case -1:
-                error("Attaching not supported on this target");
-                break;
-            default:
-                attached = 1;
-                break;
-        }
-    }
-
-    while (1)
+    for (;;)
     {
         remote_open(argv[1]);
+        packet_loop(own_buf, mem_buf, argv, &status, &sig);
 
-    restart:
-        setjmp(toplevel);
-        while (getpkt(own_buf) > 0)
-        {
-            unsigned char sig;
-            i = 0;
-            ch = own_buf[i++];
-            switch (ch)
-            {
-                /* q — query packets (qSupported, qC, qRcmd, etc.) */
-                case 'q':
-                    LOG_CMD("q — query packet: %.40s", own_buf);
-                    handle_query(own_buf);
-                    break;
-
-                /* Q — set packets (QStartNoAckMode, QPassSignals, etc.) */
-                case 'Q':
-                    LOG_CMD("Q — set packet: %.40s", own_buf);
-                    handle_set(own_buf);
-                    break;
-
-                /* d — toggle remote debug output */
-                case 'd':
-                    LOG_CMD("d — toggle remote debug");
-                    remote_debug = !remote_debug;
-                    break;
-
-                /* D — detach from inferior */
-                case 'D':
-                    LOG_CMD("D — detach from inferior");
-                    fprintf(stderr, "Detaching from inferior\n");
-                    detach_inferior();
-                    write_ok(own_buf);
-                    putpkt(own_buf);
-                    remote_close();
-
-                    /* If we are attached, then we can exit.  Otherwise, we need to
-           hang around doing nothing, until the child is gone.  */
-                    if (!attached)
-                    {
-                        int status, ret;
-
-                        do
-                        {
-                            ret = waitpid(signal_pid, &status, 0);
-                            if (WIFEXITED(status) || WIFSIGNALED(status))
-                            {
-                                break;
-                            }
-                        } while (ret != -1 || errno != ECHILD);
-                    }
-
-                    exit(0);
-
-                /* ! — extended protocol request; ack it so IDA proceeds
-         with the already-launched process.  */
-                case '!':
-                    LOG_CMD("! — extended protocol request");
-                    write_ok(own_buf);
-                    break;
-
-                /* ? — report why the target halted (stop reply) */
-                case '?':
-                    LOG_CMD("? — query halt reason");
-                    prepare_resume_reply(own_buf, status, signal);
-                    break;
-
-                /* H — set thread for subsequent operations */
-                case 'H':
-                    LOG_CMD("H — set thread: %s", own_buf);
-                    switch (own_buf[1])
-                    {
-                        case 'g':
-                            /* Hg — set thread for register read/write ops */
-                            general_thread = strtol(&own_buf[2], NULL, 16);
-                            write_ok(own_buf);
-                            set_desired_inferior(1);
-                            break;
-                        case 'c':
-                            /* Hc — set thread for continue/step ops */
-                            cont_thread = strtol(&own_buf[2], NULL, 16);
-                            write_ok(own_buf);
-                            break;
-                        case 's':
-                            /* Hs — set thread for step ops */
-                            step_thread = strtol(&own_buf[2], NULL, 16);
-                            write_ok(own_buf);
-                            break;
-                        default:
-                            /* Silently ignore it so that gdb can extend the protocol
-             without compatibility headaches.  */
-                            own_buf[0] = '\0';
-                            break;
-                    }
-                    break;
-
-                /* g — read all registers */
-                case 'g':
-                    LOG_CMD("g — read all registers");
-                    set_desired_inferior(1);
-                    registers_to_string(own_buf);
-                    break;
-
-                /* G — write all registers */
-                case 'G':
-                    LOG_CMD("G — write all registers");
-                    set_desired_inferior(1);
-                    registers_from_string(&own_buf[1]);
-                    write_ok(own_buf);
-                    break;
-
-                /* [NEW] p — read single register by number */
-                case 'p':
-                {
-                    int regno = strtol(&own_buf[1], NULL, 16);
-                    LOG_CMD("[NEW] p — read register %d", regno);
-                    set_desired_inferior(1);
-                    if (regno >= 0 && find_register_by_number(regno) != NULL)
-                    {
-                        collect_register_as_string(regno, own_buf);
-                    }
-                    else
-                    {
-                        write_enn(own_buf);
-                    }
-                }
-                break;
-
-                /* [NEW] P — write single register by number */
-                case 'P':
-                {
-                    int regno;
-                    char *regbytes;
-                    char regbuf[16];
-
-                    regno = strtol(&own_buf[1], &regbytes, 16);
-                    LOG_CMD("[NEW] P — write register %d", regno);
-                    if (*regbytes == '=')
-                    {
-                        regbytes++;
-                    }
-
-                    set_desired_inferior(1);
-                    if (regno >= 0 && find_register_by_number(regno) != NULL)
-                    {
-                        int regsize = register_size(regno);
-                        convert_ascii_to_int(regbytes, regbuf, regsize);
-                        supply_register(regno, regbuf);
-                        write_ok(own_buf);
-                    }
-                    else
-                    {
-                        write_enn(own_buf);
-                    }
-                }
-                break;
-
-                /* m — read memory (m addr,length) */
-                case 'm':
-                    decode_m_packet(&own_buf[1], &mem_addr, &len);
-                    LOG_CMD("m — read memory at 0x%lx len %u", (unsigned long)mem_addr, len);
-                    read_inferior_memory(mem_addr, mem_buf, len);
-                    convert_int_to_ascii(mem_buf, own_buf, len);
-                    break;
-
-                /* M — write memory (M addr,length:data) */
-                case 'M':
-                    decode_M_packet(&own_buf[1], &mem_addr, &len, mem_buf);
-                    LOG_CMD("M — write memory at 0x%lx len %u", (unsigned long)mem_addr, len);
-                    if (write_inferior_memory(mem_addr, mem_buf, len) == 0)
-                    {
-                        write_ok(own_buf);
-                    }
-                    else
-                    {
-                        write_enn(own_buf);
-                    }
-                    break;
-
-                /* C — continue with signal */
-                case 'C':
-                    LOG_CMD("C — continue with signal");
-                    convert_ascii_to_int(own_buf + 1, &sig, 1);
-                    if (target_signal_to_host_p(sig))
-                    {
-                        signal = target_signal_to_host(sig);
-                    }
-                    else
-                    {
-                        signal = 0;
-                    }
-                    set_desired_inferior(0);
-                    step_past_breakpoint(0, &status);
-                    myresume(0, signal);
-                    signal = mywait_cond(&status, 1);
-                    prepare_resume_reply(own_buf, status, signal);
-                    break;
-
-                /* S — single step with signal */
-                case 'S':
-                    LOG_CMD("S — step with signal");
-                    convert_ascii_to_int(own_buf + 1, &sig, 1);
-                    if (target_signal_to_host_p(sig))
-                    {
-                        signal = target_signal_to_host(sig);
-                    }
-                    else
-                    {
-                        signal = 0;
-                    }
-                    set_desired_inferior(0);
-                    if (step_past_breakpoint(1, &status))
-                    {
-                        signal = TARGET_SIGNAL_TRAP;
-                        prepare_resume_reply(own_buf, status, signal);
-                        break;
-                    }
-                    myresume(1, signal);
-                    signal = mywait_cond(&status, 1);
-                    prepare_resume_reply(own_buf, status, signal);
-                    break;
-
-                /* c — continue execution */
-                case 'c':
-                    LOG_CMD("c — continue");
-                    set_desired_inferior(0);
-                    step_past_breakpoint(0, &status);
-                    myresume(0, 0);
-                    signal = mywait_cond(&status, 1);
-                    prepare_resume_reply(own_buf, status, signal);
-                    break;
-
-                /* s — single step one instruction */
-                case 's':
-                    LOG_CMD("s — single step");
-                    set_desired_inferior(0);
-                    if (step_past_breakpoint(1, &status))
-                    {
-                        signal = TARGET_SIGNAL_TRAP;
-                        prepare_resume_reply(own_buf, status, signal);
-                        break;
-                    }
-                    myresume(1, 0);
-                    signal = mywait_cond(&status, 1);
-                    prepare_resume_reply(own_buf, status, signal);
-                    break;
-
-                /* k — kill the inferior */
-                case 'k':
-                    LOG_CMD("k — kill inferior");
-                    fprintf(stderr, "Killing inferior\n");
-                    kill_inferior();
-                    /* When using the extended protocol, we start up a new
-           debugging session.   The traditional protocol will
-           exit instead.  */
-                    if (extended_protocol)
-                    {
-                        write_ok(own_buf);
-                        fprintf(stderr, "GDBserver restarting\n");
-
-                        /* Wait till we are at 1st instruction in prog.  */
-                        signal = start_inferior(&argv[2], &status);
-                        goto restart;
-                        break;
-                    }
-                    else
-                    {
-                        exit(0);
-                        break;
-                    }
-
-                /* T — check if thread is alive */
-                case 'T':
-                    LOG_CMD("T — thread alive check: %s", &own_buf[1]);
-                    if (mythread_alive(strtol(&own_buf[1], NULL, 16)))
-                    {
-                        write_ok(own_buf);
-                    }
-                    else
-                    {
-                        write_enn(own_buf);
-                    }
-                    break;
-
-                /* R — restart inferior (extended protocol only) */
-                case 'R':
-                    LOG_CMD("R — restart inferior");
-                    if (extended_protocol)
-                    {
-                        kill_inferior();
-                        write_ok(own_buf);
-                        fprintf(stderr, "GDBserver restarting\n");
-
-                        /* Wait till we are at 1st instruction in prog.  */
-                        signal = start_inferior(&argv[2], &status);
-                        goto restart;
-                        break;
-                    }
-                    else
-                    {
-                        /* It is a request we don't understand.  Respond with an
-             empty packet so that gdb knows that we don't support this
-             request.  */
-                        own_buf[0] = '\0';
-                        break;
-                    }
-
-                /* v — extended (long) request packets (vCont, etc.) */
-                case 'v':
-                    LOG_CMD("v — extended request: %.40s", own_buf);
-                    handle_v_requests(own_buf, &status, &signal);
-                    break;
-
-                /* [NEW] Z — insert breakpoint (Z0 = software breakpoint) */
-                case 'Z':
-                {
-                    char type = own_buf[1];
-                    LOG_CMD("[NEW] Z — insert breakpoint type=%c: %s", type, own_buf);
-                    if (type == '0')
-                    {
-                        CORE_ADDR addr;
-                        unsigned int kind;
-                        char *p = &own_buf[3]; /* skip "Z0," */
-                        addr = (CORE_ADDR)strtoul(p, &p, 16);
-                        if (*p == ',')
-                        {
-                            p++;
-                        }
-                        kind = strtoul(p, NULL, 16);
-                        set_breakpoint_at(addr, NULL);
-                        write_ok(own_buf);
-                    }
-                    else
-                    {
-                        own_buf[0] = '\0'; /* unsupported Z type */
-                    }
-                }
-                break;
-
-                /* [NEW] z — remove breakpoint (z0 = software breakpoint) */
-                case 'z':
-                {
-                    char type = own_buf[1];
-                    LOG_CMD("[NEW] z — remove breakpoint type=%c: %s", type, own_buf);
-                    if (type == '0')
-                    {
-                        write_ok(own_buf);
-                    }
-                    else
-                    {
-                        own_buf[0] = '\0';
-                    }
-                }
-                break;
-
-                /* Unknown command — respond with empty packet */
-                default:
-                    LOG_CMD("unknown command: '%c' (0x%02x)", ch, ch);
-                    own_buf[0] = '\0';
-                    break;
-            }
-
-            putpkt(own_buf);
-
-            if (status == 'W')
-            {
-                fprintf(stderr, "\nChild exited with status %d\n", sig);
-            }
-            if (status == 'X')
-            {
-                fprintf(stderr, "\nChild terminated with signal = 0x%x\n", sig);
-            }
-            if (status == 'W' || status == 'X')
-            {
-                if (extended_protocol)
-                {
-                    fprintf(stderr, "Killing inferior\n");
-                    kill_inferior();
-                    write_ok(own_buf);
-                    fprintf(stderr, "GDBserver restarting\n");
-
-                    /* Wait till we are at 1st instruction in prog.  */
-                    signal = start_inferior(&argv[2], &status);
-                    goto restart;
-                    break;
-                }
-                else
-                {
-                    fprintf(stderr, "GDBserver exiting\n");
-                    exit(0);
-                }
-            }
-        }
-
-        /* We come here when getpkt fails.
-
-       For the extended remote protocol we exit (and this is the only
-       way we gracefully exit!).
-
-       For the traditional remote protocol close the connection,
-       and re-open it at the top of the loop.  */
         if (extended_protocol)
         {
             remote_close();
             exit(0);
         }
-        else
-        {
-            fprintf(stderr, "Remote side has terminated connection.  "
-                            "GDBserver will reopen the connection.\n");
-            remote_close();
-        }
+        fprintf(stderr, "Remote side has terminated connection.  "
+                        "GDBserver will reopen the connection.\n");
+        remote_close();
     }
 }

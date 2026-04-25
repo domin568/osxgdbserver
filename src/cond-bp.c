@@ -18,9 +18,6 @@
 
 struct cond_bp cond_bps[MAX_COND_BPS];
 
-/* ── Helpers ───────────────────────────────────────────────────── */
-
-/* Hex-encode an ASCII string into dst.  dst must be 2*len+1 bytes. */
 static void hex_encode(char *dst, const char *src, int len)
 {
     int i;
@@ -31,8 +28,7 @@ static void hex_encode(char *dst, const char *src, int len)
     dst[len * 2] = '\0';
 }
 
-/* Decode hex string (2 hex chars per byte) into dst.
-   Returns number of bytes decoded. */
+/* Decode hex string (2 hex chars per byte) into dst.  Returns count.  */
 static int hex_decode(char *dst, const char *src, int max)
 {
     int i = 0;
@@ -80,13 +76,12 @@ static int hex_decode(char *dst, const char *src, int max)
     return i;
 }
 
-/* Write a hex-encoded text response into own_buf. */
 static void make_response(char *own_buf, const char *msg)
 {
     hex_encode(own_buf, msg, strlen(msg));
 }
 
-/* Parse a PPC register name, return GDB register number or -1. */
+/* Parse a PPC register name; returns GDB register number or -1. */
 static int parse_reg_name(const char *name)
 {
     char upper[8];
@@ -142,7 +137,6 @@ static int parse_reg_name(const char *name)
 
 /* ── Operator parsing ─────────────────────────────────────────── */
 
-/* Parse operator string.  Returns op code or -1 on error. */
 static int parse_op(const char *s)
 {
     if (strcmp(s, "==") == 0)
@@ -195,8 +189,7 @@ static int compare_values(unsigned long current, int op, unsigned long expected)
 
 /* ── Expression parser (for str: reg, reg+off, reg-off, abs) ── */
 
-/* Parse an expression like "r9+0xa", "r3", "0x1234" and fill out
-   reg_index, offset, abs_addr.  Returns 1 on success. */
+/* Parse an expression like "r9+0xa", "r3", "0x1234".  Returns 1 on success. */
 static int parse_expr(const char *expr, int *reg_index, int *offset, unsigned long *abs_addr,
                       char *own_buf)
 {
@@ -255,7 +248,6 @@ static int parse_expr(const char *expr, int *reg_index, int *offset, unsigned lo
     return 1;
 }
 
-/* Find a free cond_bp slot.  Returns slot index or -1. */
 static int find_free_slot(void)
 {
     int i;
@@ -271,10 +263,10 @@ static int find_free_slot(void)
 
 /* ── cond_bp command parser ───────────────────────────────────── */
 
-/* Parse:
-   cond_bp <addr> str <reg+off> ==|!= <string>
-   cond_bp <addr> reg <reg_name> <op> <hex_value>
-   cond_bp <addr> mem <hex_addr> <size> <op> <hex_value> */
+/* Syntax:
+     cond_bp <addr> str <reg+off> ==|!= <string>
+     cond_bp <addr> reg <reg_name> <op> <hex_value>
+     cond_bp <addr> mem <hex_addr> <size> <op> <hex_value>  */
 static void cmd_cond_bp(const char *args, char *own_buf)
 {
     char addr_str[32], type_str[16];
@@ -304,7 +296,6 @@ static void cmd_cond_bp(const char *args, char *own_buf)
 
     if (strcmp(type_str, "str") == 0)
     {
-        /* ── str type: cond_bp <addr> str <expr> <op> <string> ── */
         char expr[64], op_str[4], target[MAX_COND_STR];
         int reg_index, offset, op, i;
         unsigned long abs_addr;
@@ -327,8 +318,8 @@ static void cmd_cond_bp(const char *args, char *own_buf)
             return;
         }
 
-        /* The target string is everything after the operator.
-       Skip 4 tokens: addr, type, expr, op. */
+        /* Target string: everything after the 4 leading tokens
+           (addr, type, expr, op).  */
         {
             const char *p = args;
             int tok = 0;
@@ -380,7 +371,6 @@ static void cmd_cond_bp(const char *args, char *own_buf)
     }
     else if (strcmp(type_str, "reg") == 0)
     {
-        /* ── reg type: cond_bp <addr> reg <reg_name> <op> <value> ── */
         char reg_name[16], op_str[4], val_str[32];
         int reg_id, op;
         unsigned long value;
@@ -424,7 +414,6 @@ static void cmd_cond_bp(const char *args, char *own_buf)
     }
     else if (strcmp(type_str, "mem") == 0)
     {
-        /* ── mem type: cond_bp <addr> mem <hex_addr> <size> <op> <value> ── */
         char maddr_str[32], op_str[4], val_str[32];
         unsigned long mem_addr, value;
         int mem_size, op;
@@ -563,8 +552,8 @@ void handle_rcmd(char *hex_cmd, char *own_buf)
 
 /* ── Public: check conditional breakpoint at PC ───────────────── */
 
-/* Read a null-terminated string from the inferior at address ADDR.
-   Returns length read.  BUF is filled up to MAX bytes. */
+/* Read a null-terminated string from the inferior at ADDR into BUF
+   (up to MAX bytes).  Returns the length read.  */
 static int read_inferior_string(CORE_ADDR addr, char *buf, int max)
 {
     int i;
@@ -598,11 +587,8 @@ int check_cond_bp(CORE_ADDR pc)
             continue;
         }
 
-        /* Found a conditional breakpoint at this PC. */
-
         if (cb->cond_type == COND_TYPE_STR)
         {
-            /* String comparison. */
             CORE_ADDR str_addr;
             char str_buf[MAX_COND_STR];
             int match;
@@ -643,7 +629,6 @@ int check_cond_bp(CORE_ADDR pc)
         }
         else if (cb->cond_type == COND_TYPE_REG)
         {
-            /* Register comparison. */
             unsigned int reg_val = 0;
             int result;
 
@@ -659,7 +644,7 @@ int check_cond_bp(CORE_ADDR pc)
         }
         else if (cb->cond_type == COND_TYPE_MEM)
         {
-            /* Memory comparison (big-endian PPC). */
+            /* Memory comparison (big-endian PPC).  */
             unsigned char mem_buf[4];
             unsigned long current = 0;
             int result;
@@ -667,7 +652,6 @@ int check_cond_bp(CORE_ADDR pc)
             memset(mem_buf, 0, sizeof(mem_buf));
             read_inferior_memory(cb->mem_addr, mem_buf, cb->mem_size);
 
-            /* Big-endian byte order. */
             switch (cb->mem_size)
             {
                 case 1:
