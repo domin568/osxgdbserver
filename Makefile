@@ -21,7 +21,7 @@ INCLUDES = -I$(INCDIR)
 INTERNAL_CFLAGS = $(CFLAGS) $(INCLUDES)
 
 NAMES = inferiors regcache remote-utils server target \
-        utils mem-break signals cond-bp \
+        utils mem-break signals \
         darwin-low darwin-ppc-low reg-ppc
 
 OBS = $(addprefix $(OBJDIR)/, $(addsuffix .o, $(NAMES)))
@@ -55,7 +55,6 @@ $(OBJDIR)/remote-utils.o:   $(SRCDIR)/remote-utils.c   $(INCDIR)/server.h $(INCD
 $(OBJDIR)/target.o:         $(SRCDIR)/target.c         $(INCDIR)/server.h
 $(OBJDIR)/utils.o:          $(SRCDIR)/utils.c          $(INCDIR)/server.h
 $(OBJDIR)/mem-break.o:      $(SRCDIR)/mem-break.c      $(INCDIR)/server.h
-$(OBJDIR)/cond-bp.o:        $(SRCDIR)/cond-bp.c        $(INCDIR)/cond-bp.h $(INCDIR)/server.h
 $(OBJDIR)/darwin-low.o:     $(SRCDIR)/darwin-low.c     $(INCDIR)/darwin-low.h $(INCDIR)/server.h
 $(OBJDIR)/darwin-ppc-low.o: $(SRCDIR)/darwin-ppc-low.c $(INCDIR)/darwin-low.h $(INCDIR)/server.h
 $(OBJDIR)/reg-ppc.o:        $(SRCDIR)/reg-ppc.c        $(INCDIR)/regdef.h

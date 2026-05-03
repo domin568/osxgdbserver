@@ -52,6 +52,28 @@ static int remote_desc;
 extern int using_threads;
 extern int debug_threads;
 
+/* ------------------------------------------------------------------ */
+/* Logging macro for network / packet layer events.                    */
+/* Enabled by LOG=1 (reuses the log_enabled flag from server.c via     */
+/* the extern below).  Always printed to stderr with a [NET] prefix.  */
+/* ------------------------------------------------------------------ */
+extern int verbosity; /* defined in server.c */
+
+#define LOG_NET(fmt, ...)                                                                          \
+    do                                                                                             \
+    {                                                                                              \
+        if (verbosity == 2)                                                                           \
+            fprintf(stderr, "[NET] " fmt "\n", ##__VA_ARGS__);                                    \
+    } while (0)
+
+/* Highlight the packet message-loop boundaries so they stand out in logs. */
+#define LOG_LOOP(fmt, ...)                                                                         \
+    do                                                                                             \
+    {                                                                                              \
+        if (verbosity == 2)                                                                           \
+            fprintf(stderr, "[NET] >>>>>> " fmt " <<<<<<\n", ##__VA_ARGS__);                      \
+    } while (0)
+
 /* Open a connection to a remote debugger.
    NAME is the filename used for communication.  */
 
@@ -59,13 +81,18 @@ void remote_open(char *name)
 {
     int save_fcntl_flags;
 
+    LOG_NET("remote_open: opening connection to '%s'", name);
+
     if (!strchr(name, ':'))
     {
+        LOG_NET("remote_open: serial device path detected");
         remote_desc = open(name, O_RDWR);
         if (remote_desc < 0)
         {
+            LOG_NET("remote_open: failed to open serial device '%s'", name);
             perror_with_name("Could not open remote device");
         }
+        LOG_NET("remote_open: serial device opened, fd=%d", remote_desc);
 
 #ifdef HAVE_TERMIOS
         {
@@ -122,14 +149,17 @@ void remote_open(char *name)
         int tmp_desc;
 
         port_str = strchr(name, ':');
-
         port = atoi(port_str + 1);
+
+        LOG_NET("remote_open: TCP mode, port=%d", port);
 
         tmp_desc = socket(PF_INET, SOCK_STREAM, 0);
         if (tmp_desc < 0)
         {
+            LOG_NET("remote_open: socket() failed");
             perror_with_name("Can't open socket");
         }
+        LOG_NET("remote_open: listen socket created, fd=%d", tmp_desc);
 
         /* Allow rapid reuse of this port. */
         tmp = 1;
@@ -141,40 +171,44 @@ void remote_open(char *name)
 
         if (bind(tmp_desc, (struct sockaddr *)&sockaddr, sizeof(sockaddr)) || listen(tmp_desc, 1))
         {
+            LOG_NET("remote_open: bind/listen failed on port %d", port);
             perror_with_name("Can't bind address");
         }
 
+        LOG_NET("remote_open: bound and listening on port %d, waiting for client...", port);
         fprintf(stderr, "Listening on port %d\n", port);
 
         tmp = sizeof(sockaddr);
         remote_desc = accept(tmp_desc, (struct sockaddr *)&sockaddr, &tmp);
         if (remote_desc == -1)
         {
+            LOG_NET("remote_open: accept() failed");
             perror_with_name("Accept failed");
         }
+        LOG_NET("remote_open: client accepted, connection fd=%d", remote_desc);
 
         /* Enable TCP keep alive process. */
         tmp = 1;
         setsockopt(tmp_desc, SOL_SOCKET, SO_KEEPALIVE, (char *)&tmp, sizeof(tmp));
 
-        /* Tell TCP not to delay small packets.  This greatly speeds up
-       interactive response. */
         tmp = 1;
         setsockopt(remote_desc, IPPROTO_TCP, TCP_NODELAY, (char *)&tmp, sizeof(tmp));
+        LOG_NET("remote_open: TCP_NODELAY enabled on connection fd");
 
-        close(tmp_desc); /* No longer need this */
+        close(tmp_desc);
+        LOG_NET("remote_open: listen socket closed");
 
-        signal(SIGPIPE, SIG_IGN); /* If we don't do this, then gdbserver simply
-                                 exits when the remote side dies.  */
+        signal(SIGPIPE, SIG_IGN);
 
-        /* Convert IP address to string.  */
         fprintf(stderr, "Remote debugging from host %s\n", inet_ntoa(sockaddr.sin_addr));
+        LOG_NET("remote_open: client address = %s", inet_ntoa(sockaddr.sin_addr));
 
         /* Send initial ACK so clients that wait for server readiness
-       (e.g. IDA Pro) know we are ready to receive packets.  */
+           (e.g. IDA Pro) know we are ready to receive packets.  */
         {
             char ack = '+';
             write(remote_desc, &ack, 1);
+            LOG_NET("remote_open: sent initial '+' ACK to client");
         }
     }
 
@@ -184,16 +218,20 @@ void remote_open(char *name)
 #if defined(F_SETOWN)
     fcntl(remote_desc, F_SETOWN, getpid());
 #endif
+    LOG_NET("remote_open: async I/O (FASYNC) configured on fd=%d", remote_desc);
 #endif
     disable_async_io();
+    LOG_NET("remote_open: async I/O disabled (SIGIO ignored) — ready for packet loop");
 }
 
 void remote_close(void)
 {
+    LOG_NET("remote_close: closing connection fd=%d", remote_desc);
     close(remote_desc);
     /* Reset protocol state so the next connection starts clean. */
     no_ack_mode = 0;
     no_ack_mode_pending = 0;
+    LOG_NET("remote_close: connection closed, protocol state reset (no_ack_mode=0)");
 }
 
 /* Convert hex digit A to a number.  */
@@ -218,7 +256,7 @@ static int fromhex(int a)
 int unhexify(char *bin, const char *hex, int count)
 {
     int i;
-
+    LOG_NET("unhexify: hex='%s' count=%d", hex, count);
     for (i = 0; i < count; i++)
     {
         if (hex[0] == 0 || hex[1] == 0)
@@ -310,24 +348,28 @@ int putpkt(char *buf)
     *p++ = '#';
     *p++ = tohex((csum >> 4) & 0xf);
     *p++ = tohex(csum & 0xf);
-
     *p = '\0';
 
-    /* Send it over and over until we get a positive ack.
-     In no-ack mode (QStartNoAckMode) skip the ACK handshake entirely.  */
+    LOG_LOOP("putpkt SEND  payload='%s'  framed='%s'  csum=0x%02x  no_ack=%d",
+             buf, buf2, csum, no_ack_mode);
 
+    /* Send it over and over until we get a positive ack. */
     do
     {
         int cc;
 
         if (write(remote_desc, buf2, p - buf2) != p - buf2)
         {
+            LOG_NET("putpkt: write() failed for packet '%s'", buf2);
             perror("putpkt(write)");
+            free(buf2);
             return -1;
         }
+        LOG_NET("putpkt: wrote %d bytes to fd=%d", (int)(p - buf2), remote_desc);
 
         if (no_ack_mode)
         {
+            LOG_NET("putpkt: no-ack mode active — skipping ACK wait");
             break;
         }
 
@@ -336,7 +378,10 @@ int putpkt(char *buf)
             fprintf(stderr, "putpkt (\"%s\"); [looking for ack]\n", buf2);
             fflush(stderr);
         }
+
+        LOG_NET("putpkt: waiting for ACK byte...");
         cc = read(remote_desc, buf3, 1);
+
         if (remote_debug)
         {
             fprintf(stderr, "[received '%c' (0x%x)]\n", buf3[0], buf3[0]);
@@ -347,10 +392,12 @@ int putpkt(char *buf)
         {
             if (cc == 0)
             {
+                LOG_NET("putpkt: EOF while waiting for ACK");
                 fprintf(stderr, "putpkt(read): Got EOF\n");
             }
             else
             {
+                LOG_NET("putpkt: read error while waiting for ACK");
                 perror("putpkt(read)");
             }
 
@@ -358,13 +405,26 @@ int putpkt(char *buf)
             return -1;
         }
 
-        /* Check for an input interrupt while we're here.  */
-        if (buf3[0] == '\003')
+        if (buf3[0] == '+')
         {
+            LOG_NET("putpkt: received '+' ACK — packet delivered OK");
+        }
+        else if (buf3[0] == '-')
+        {
+            LOG_NET("putpkt: received '-' NACK — client requesting retransmit of '%s'", buf2);
+        }
+        else if (buf3[0] == '\003')
+        {
+            LOG_NET("putpkt: received Ctrl-C (0x03) — forwarding SIGINT to inferior");
             (*the_target->send_signal)(SIGINT);
+        }
+        else
+        {
+            LOG_NET("putpkt: unexpected ACK byte 0x%02x '%c'", (unsigned char)buf3[0], buf3[0]);
         }
     } while (buf3[0] != '+');
 
+    LOG_NET("putpkt: done — packet '%s' acknowledged", buf);
     free(buf2);
     return 1; /* Success! */
 }
@@ -379,8 +439,7 @@ static void input_interrupt(int unused)
     fd_set readset;
     struct timeval immediate = {0, 0};
 
-    /* Protect against spurious interrupts.  This has been observed to
-     be a problem under NetBSD 1.4 and 1.5.  */
+    LOG_NET("input_interrupt: SIGIO received — checking for data on fd=%d", remote_desc);
 
     FD_ZERO(&readset);
     FD_SET(remote_desc, &readset);
@@ -393,16 +452,23 @@ static void input_interrupt(int unused)
 
         if (cc != 1 || c != '\003')
         {
+            LOG_NET("input_interrupt: unexpected data cc=%d c=0x%02x — ignoring", cc, (unsigned char)c);
             fprintf(stderr, "input_interrupt, cc = %d c = %d\n", cc, c);
             return;
         }
 
+        LOG_NET("input_interrupt: got Ctrl-C (0x03) — sending SIGINT to inferior");
         (*the_target->send_signal)(SIGINT);
+    }
+    else
+    {
+        LOG_NET("input_interrupt: select() returned nothing (spurious interrupt)");
     }
 }
 
 void block_async_io(void)
 {
+    LOG_NET("block_async_io: blocking SIGIO");
     sigset_t sigio_set;
     sigemptyset(&sigio_set);
     sigaddset(&sigio_set, SIGIO);
@@ -411,6 +477,7 @@ void block_async_io(void)
 
 void unblock_async_io(void)
 {
+    LOG_NET("unblock_async_io: unblocking SIGIO");
     sigset_t sigio_set;
     sigemptyset(&sigio_set);
     sigaddset(&sigio_set, SIGIO);
@@ -419,11 +486,13 @@ void unblock_async_io(void)
 
 void enable_async_io(void)
 {
+    LOG_NET("enable_async_io: SIGIO → input_interrupt handler installed");
     signal(SIGIO, input_interrupt);
 }
 
 void disable_async_io(void)
 {
+    LOG_NET("disable_async_io: SIGIO → SIG_IGN");
     signal(SIGIO, SIG_IGN);
 }
 
@@ -434,35 +503,35 @@ static int readchar(void)
     static char buf[BUFSIZ];
     static int bufcnt = 0;
     static char *bufp;
-
     if (bufcnt-- > 0)
     {
         return *bufp++ & 0x7f;
     }
 
+    memset(buf, 0, sizeof(buf));
     bufcnt = read(remote_desc, buf, sizeof(buf));
 
     if (bufcnt <= 0)
     {
         if (bufcnt == 0)
         {
+            LOG_NET("readchar: EOF on fd=%d", remote_desc);
             fprintf(stderr, "readchar: Got EOF\n");
         }
         else
         {
+            LOG_NET("readchar: read error on fd=%d", remote_desc);
             perror("readchar");
         }
-
         return -1;
     }
 
+    LOG_NET("readchar: refilled buffer with %d bytes from fd=%d", bufcnt, remote_desc);
     bufp = buf;
     bufcnt--;
+    LOG_NET("readchar: bufp = %s", bufp);
     return *bufp++ & 0x7f;
 }
-
-/* Read a packet from the remote machine, with error checking,
-   and store it in BUF.  Returns length of packet, or negative if error. */
 
 int getpkt(char *buf)
 {
@@ -470,15 +539,19 @@ int getpkt(char *buf)
     unsigned char csum, c1, c2;
     int c;
 
+    LOG_LOOP("getpkt RECV  waiting for '$' start-of-packet  no_ack=%d", no_ack_mode);
+
     while (1)
     {
         csum = 0;
 
+        /* Scan for '$' — the start-of-packet marker. */
         while (1)
         {
             c = readchar();
             if (c == '$')
             {
+                LOG_NET("getpkt: got '$' — reading packet body");
                 break;
             }
             if (remote_debug)
@@ -486,19 +559,23 @@ int getpkt(char *buf)
                 fprintf(stderr, "[getpkt: discarding char '%c']\n", c);
                 fflush(stderr);
             }
-
             if (c < 0)
             {
+                LOG_NET("getpkt: error/EOF while scanning for '$'");
                 return -1;
             }
+            LOG_NET("getpkt: discarding pre-packet byte 0x%02x '%c'",
+                    (unsigned char)c, (c >= 32 && c < 127) ? c : '.');
         }
 
+        /* Read packet body up to '#'. */
         bp = buf;
         while (1)
         {
             c = readchar();
             if (c < 0)
             {
+                LOG_NET("getpkt: error/EOF inside packet body");
                 return -1;
             }
             if (c == '#')
@@ -510,16 +587,20 @@ int getpkt(char *buf)
         }
         *bp = 0;
 
+        LOG_NET("getpkt: packet body='%s'  computed_csum=0x%02x", buf, csum);
+
         c1 = fromhex(readchar());
         c2 = fromhex(readchar());
 
         if (csum == (c1 << 4) + c2)
         {
+            LOG_NET("getpkt: checksum OK (0x%02x)", csum);
             break;
         }
 
-        fprintf(stderr, "Bad checksum, sentsum=0x%x, csum=0x%x, buf=%s\n", (c1 << 4) + c2, csum,
-                buf);
+        LOG_NET("getpkt: BAD checksum — received=0x%02x computed=0x%02x buf='%s' — sending '-' NACK",
+                (c1 << 4) + c2, csum, buf);
+        fprintf(stderr, "Bad checksum, sentsum=0x%x, csum=0x%x, buf=%s\n", (c1 << 4) + c2, csum, buf);
         write(remote_desc, "-", 1);
     }
 
@@ -532,6 +613,7 @@ int getpkt(char *buf)
         }
 
         write(remote_desc, "+", 1);
+        LOG_NET("getpkt: sent '+' ACK for packet '%s'", buf);
 
         if (remote_debug)
         {
@@ -539,12 +621,17 @@ int getpkt(char *buf)
             fflush(stderr);
         }
     }
-    else if (remote_debug)
+    else
     {
-        fprintf(stderr, "getpkt (\"%s\");  [no-ack mode, skipping ack]\n", buf);
-        fflush(stderr);
+        if (remote_debug)
+        {
+            fprintf(stderr, "getpkt (\"%s\");  [no-ack mode, skipping ack]\n", buf);
+            fflush(stderr);
+        }
+        LOG_NET("getpkt: no-ack mode — skipping '+' ACK for packet '%s'", buf);
     }
 
+    LOG_LOOP("getpkt DONE  payload='%s'  len=%d", buf, (int)(bp - buf));
     return bp - buf;
 }
 
@@ -649,6 +736,8 @@ void dead_thread_notify(int id)
 
 void prepare_resume_reply(char *buf, char status, unsigned char signo)
 {
+    LOG_NET("prepare_resume_reply: status='%c' signo=%u", status, signo);
+
     int nib, sig;
 
     *buf++ = status;
@@ -700,6 +789,8 @@ void prepare_resume_reply(char *buf, char status, unsigned char signo)
     }
     /* For W and X, we're done.  */
     *buf++ = 0;
+
+    LOG_NET("prepare_resume_reply: reply built = '%s'", buf - (buf[0] ? strlen(buf) : 0));
 }
 
 void decode_m_packet(char *from, CORE_ADDR *mem_addr_ptr, unsigned int *len_ptr)

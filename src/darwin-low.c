@@ -45,7 +45,7 @@ static task_t current_task = MACH_PORT_NULL;
 static thread_act_t current_thread = MACH_PORT_NULL;
 
 /* These are referenced by remote-utils.c.  */
-int using_threads = 0;
+int using_threads = 1;
 int debug_threads = 0;
 
 /* Get the Mach task port for a given pid.  */
@@ -95,9 +95,8 @@ static int darwin_create_inferior(char *program, char **allargs)
 
     if (pid == 0)
     {
-        /* Child process.  */
         ptrace(PT_TRACE_ME, 0, 0, 0);
-        /* Redirect stdin/stdout if needed.  */
+        // handle gdbserver running in background (&)
         signal(SIGTTOU, SIG_DFL);
         signal(SIGTTIN, SIG_DFL);
         execv(program, allargs);
@@ -114,12 +113,6 @@ static int darwin_create_inferior(char *program, char **allargs)
     usleep(100000);
 
     current_task = darwin_task_for_pid(pid);
-    if (current_task == MACH_PORT_NULL)
-    {
-        /* If task_for_pid fails immediately, wait a bit more and retry.  */
-        usleep(200000);
-        current_task = darwin_task_for_pid(pid);
-    }
     if (current_task == MACH_PORT_NULL)
     {
         kill(pid, SIGKILL);

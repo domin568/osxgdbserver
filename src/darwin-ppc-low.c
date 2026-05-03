@@ -189,7 +189,7 @@ static void darwin_ppc_set_pc(CORE_ADDR pc)
 }
 
 /* PPC trap instruction for software breakpoints. */
-static const unsigned int ppc_breakpoint = 0x7d821008;
+static const unsigned int ppc_breakpoint = 0x7FE00008;
 #define PPC_BREAKPOINT_LEN 4
 
 static int darwin_ppc_breakpoint_at(CORE_ADDR where)

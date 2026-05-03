@@ -91,6 +91,7 @@ static void delete_breakpoint(struct breakpoint *bp)
             free(bp);
             return;
         }
+        cur = cur->next;
     }
     warning("Could not find breakpoint in list.");
 }
